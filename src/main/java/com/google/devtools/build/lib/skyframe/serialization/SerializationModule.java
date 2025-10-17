@@ -17,15 +17,20 @@ import static com.google.common.util.concurrent.Futures.immediateFuture;
 import static com.google.common.util.concurrent.MoreExecutors.directExecutor;
 import static java.util.concurrent.ForkJoinPool.commonPool;
 
+import com.google.common.flogger.GoogleLogger;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.devtools.build.lib.analysis.BlazeDirectories;
 import com.google.devtools.build.lib.runtime.BlazeModule;
 import com.google.devtools.build.lib.runtime.BlazeRuntime;
+import com.google.devtools.build.lib.runtime.CommandEnvironment;
 import com.google.devtools.build.lib.runtime.WorkspaceBuilder;
 import com.google.devtools.build.lib.skyframe.serialization.analysis.RemoteAnalysisCacheClient;
+import com.google.devtools.build.lib.skyframe.serialization.analysis.RemoteAnalysisCachingOptions;
 import com.google.devtools.build.lib.skyframe.serialization.analysis.RemoteAnalysisCachingServicesSupplier;
 import com.google.devtools.build.lib.util.DetailedExitCode;
+import com.google.devtools.build.lib.vfs.Path;
 import com.google.errorprone.annotations.ForOverride;
+import java.io.IOException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -34,8 +39,10 @@ import javax.annotation.Nullable;
 
 /** A {@link BlazeModule} to store Skyframe serialization lifecycle hooks. */
 public class SerializationModule extends BlazeModule {
+  private static final GoogleLogger logger = GoogleLogger.forEnclosingClass();
 
   private RemoteAnalysisCachingServicesSupplier remoteAnalysisCachingServicesSupplier;
+  private BlazeDirectories directories;
 
   @Override
   public void workspaceInit(
@@ -46,6 +53,8 @@ public class SerializationModule extends BlazeModule {
       // documentation HTML.
       return;
     }
+    this.directories = directories;
+
     // This is injected as a callback instead of evaluated eagerly to avoid forcing the somewhat
     // expensive AutoRegistry.get call on clients that don't require it.
     builder.setAnalysisCodecRegistrySupplier(
@@ -53,6 +62,20 @@ public class SerializationModule extends BlazeModule {
 
     remoteAnalysisCachingServicesSupplier = getAnalysisCachingServicesSupplier();
     builder.setRemoteAnalysisCachingServicesSupplier(remoteAnalysisCachingServicesSupplier);
+  }
+
+  @Override
+  public void beforeCommand(CommandEnvironment env) {
+    // Check if we should use disk cache based on options
+    if (env.getOptions() != null) {
+      RemoteAnalysisCachingOptions options =
+          env.getOptions().getOptions(RemoteAnalysisCachingOptions.class);
+      if (options != null && options.diskAnalysisCache && directories != null) {
+        // Replace the supplier with disk-backed version
+        remoteAnalysisCachingServicesSupplier =
+            createDiskBackedServicesSupplier(directories);
+      }
+    }
   }
 
   @Override
@@ -108,6 +131,25 @@ public class SerializationModule extends BlazeModule {
     return InMemoryRemoteAnalysisCachingServicesSupplier.INSTANCE;
   }
 
+  /**
+   * Creates a disk-backed services supplier.
+   *
+   * <p>This creates a persistent analysis cache in the output base directory.
+   */
+  private RemoteAnalysisCachingServicesSupplier createDiskBackedServicesSupplier(
+      BlazeDirectories directories) {
+    Path cacheDir = directories.getOutputBase().getRelative("analysis-cache");
+    try {
+      DiskFingerprintValueStore diskStore = new DiskFingerprintValueStore(cacheDir);
+      logger.atInfo().log("Using disk-based analysis cache at: %s", cacheDir);
+      return new DiskBackedServicesSupplier(diskStore);
+    } catch (IOException e) {
+      logger.atWarning().withCause(e).log(
+          "Failed to create disk analysis cache, falling back to in-memory");
+      return InMemoryRemoteAnalysisCachingServicesSupplier.INSTANCE;
+    }
+  }
+
   /** A supplier that uses an in-memory fingerprint value service. */
   private static final class InMemoryRemoteAnalysisCachingServicesSupplier
       implements RemoteAnalysisCachingServicesSupplier {
@@ -117,7 +159,6 @@ public class SerializationModule extends BlazeModule {
     private static final FingerprintValueService SERVICE_INSTANCE =
         new FingerprintValueService(
             commonPool(),
-            // TODO: b/358347099 - use a persistent store
             FingerprintValueStore.inMemoryStore(),
             new FingerprintValueCache(FingerprintValueCache.SyncMode.NOT_LINKED),
             FingerprintValueService.NONPROD_FINGERPRINTER,
@@ -129,6 +170,29 @@ public class SerializationModule extends BlazeModule {
     @Override
     public ListenableFuture<FingerprintValueService> getFingerprintValueService() {
       return WRAPPED_SERVICE_INSTANCE;
+    }
+  }
+
+  /** A supplier that uses a disk-based fingerprint value service. */
+  private static final class DiskBackedServicesSupplier
+      implements RemoteAnalysisCachingServicesSupplier {
+    private final FingerprintValueService serviceInstance;
+    private final ListenableFuture<FingerprintValueService> wrappedServiceInstance;
+
+    DiskBackedServicesSupplier(DiskFingerprintValueStore diskStore) {
+      this.serviceInstance =
+          new FingerprintValueService(
+              commonPool(),
+              diskStore,
+              new FingerprintValueCache(FingerprintValueCache.SyncMode.NOT_LINKED),
+              FingerprintValueService.NONPROD_FINGERPRINTER,
+              /* jsonLogWriter= */ null);
+      this.wrappedServiceInstance = immediateFuture(serviceInstance);
+    }
+
+    @Override
+    public ListenableFuture<FingerprintValueService> getFingerprintValueService() {
+      return wrappedServiceInstance;
     }
   }
 }
