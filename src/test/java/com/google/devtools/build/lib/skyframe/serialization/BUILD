@@ -384,6 +384,23 @@ java_test(
     ],
 )
 
+java_test(
+    name = "DiskFingerprintValueStoreTest",
+    size = "small",
+    srcs = ["DiskFingerprintValueStoreTest.java"],
+    deps = [
+        "//src/main/java/com/google/devtools/build/lib/skyframe/serialization",
+        "//src/main/java/com/google/devtools/build/lib/skyframe/serialization:disk_fingerprint_value_store",
+        "//src/main/java/com/google/devtools/build/lib/skyframe/serialization:write_statuses",
+        "//src/main/java/com/google/devtools/build/lib/vfs",
+        "//src/main/java/com/google/devtools/build/lib/vfs:pathfragment",
+        "//src/main/java/com/google/devtools/build/lib/vfs/inmemoryfs",
+        "//third_party:guava",
+        "//third_party:junit4",
+        "//third_party:truth",
+    ],
+)
+
 java_library(
     name = "serialization-tests",
     testonly = 1,
@@ -418,6 +435,8 @@ java_library(
             "ExpressionCodecTest.java",
             "BzlLoadValueCodecTest.java",
             "ProviderCodecTest.java",
+            "DiskFingerprintValueStoreTest.java",
+            "FingerprintValueStoreBenchmark.java",
         ],
     ),
     runtime_deps = [
@@ -464,5 +483,19 @@ java_test(
     runtime_deps = [
         ":serialization-tests",
         "//src/test/java/com/google/devtools/build/lib:test_runner",
+    ],
+)
+
+java_binary(
+    name = "FingerprintValueStoreBenchmark",
+    testonly = 1,
+    srcs = ["FingerprintValueStoreBenchmark.java"],
+    main_class = "com.google.devtools.build.lib.skyframe.serialization.FingerprintValueStoreBenchmark",
+    deps = [
+        "//src/main/java/com/google/devtools/build/lib/skyframe/serialization",
+        "//src/main/java/com/google/devtools/build/lib/skyframe/serialization:disk_fingerprint_value_store",
+        "//src/main/java/com/google/devtools/build/lib/vfs",
+        "//src/main/java/com/google/devtools/build/lib/vfs/inmemoryfs",
+        "//third_party:guava",
     ],
 )
