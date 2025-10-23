@@ -55,14 +55,18 @@ java_library(
     name = "serialization_module",
     srcs = ["SerializationModule.java"],
     deps = [
+        ":disk_fingerprint_value_store",
         ":serialization",
         ":serialization_registry_setup_helpers",
         "//src/main/java/com/google/devtools/build/lib:runtime",
         "//src/main/java/com/google/devtools/build/lib/analysis:blaze_directories",
+        "//src/main/java/com/google/devtools/build/lib/skyframe/serialization/analysis:options",
         "//src/main/java/com/google/devtools/build/lib/skyframe/serialization/analysis:remote_analysis_cache_client",
         "//src/main/java/com/google/devtools/build/lib/skyframe/serialization/analysis:remote_analysis_caching_services_supplier",
         "//src/main/java/com/google/devtools/build/lib/util:detailed_exit_code",
+        "//src/main/java/com/google/devtools/build/lib/vfs",
         "//third_party:error_prone_annotations",
+        "//third_party:flogger",
         "//third_party:guava",
         "//third_party:jsr305",
     ],
@@ -96,6 +100,7 @@ java_library(
             "CodecScanningConstants.java",
             "DependOnFutureShim.java",
             "DeserializedSkyValue.java",
+            "DiskFingerprintValueStore.java",
             "ErrorMessageHelper.java",
             "FrontierNodeVersion.java",
             "ModuleCodec.java",
@@ -133,6 +138,20 @@ java_library(
         "//third_party/pprof:profile_java_proto",
         "@com_google_protobuf//:protobuf_java",
         "@zstd-jni",
+    ],
+)
+
+java_library(
+    name = "disk_fingerprint_value_store",
+    srcs = ["DiskFingerprintValueStore.java"],
+    deps = [
+        ":serialization",
+        ":write_statuses",
+        "//src/main/java/com/google/devtools/build/lib/vfs",
+        "//src/main/java/com/google/devtools/build/lib/vfs:pathfragment",
+        "//third_party:flogger",
+        "//third_party:guava",
+        "//third_party:jsr305",
     ],
 )
 

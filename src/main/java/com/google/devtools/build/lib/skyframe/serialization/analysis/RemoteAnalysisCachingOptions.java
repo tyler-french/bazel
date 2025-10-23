@@ -243,4 +243,28 @@ public class RemoteAnalysisCachingOptions extends OptionsBase {
               + " additional logging. In particular, the data structures that are being serialized "
               + " and the observable behavior of the serialization machinery must not change.")
   public HashCode serverChecksumOverride;
+
+  @Option(
+      name = "experimental_disk_analysis_cache",
+      defaultValue = "false",
+      documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
+      effectTags = {OptionEffectTag.BAZEL_INTERNAL_CONFIGURATION},
+      help =
+          "If true, enables persistent disk-based storage for the analysis cache. "
+              + "This allows the analysis cache to persist across Bazel server restarts. "
+              + "The cache is stored in the directory specified by "
+              + "--experimental_disk_analysis_cache_dir, or <output_base>/analysis-cache if not "
+              + "specified. This is an experimental feature.")
+  public boolean diskAnalysisCache;
+
+  @Option(
+      name = "experimental_disk_analysis_cache_dir",
+      defaultValue = "null",
+      documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
+      effectTags = {OptionEffectTag.BAZEL_INTERNAL_CONFIGURATION},
+      help =
+          "Directory where the disk-based analysis cache is stored. "
+              + "If not specified, defaults to <output_base>/analysis-cache. "
+              + "Only used when --experimental_disk_analysis_cache=true.")
+  public String diskAnalysisCacheDir;
 }
