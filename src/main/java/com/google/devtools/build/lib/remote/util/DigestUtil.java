@@ -69,6 +69,11 @@ public class DigestUtil {
     return buildDigest(hashFn.getHashFunction().hashBytes(blob).toString(), blob.length);
   }
 
+  /** Computes a digest for a slice of a byte array. */
+  public Digest compute(byte[] blob, int off, int len) {
+    return buildDigest(hashFn.getHashFunction().hashBytes(blob, off, len).toString(), len);
+  }
+
   /**
    * Computes a digest for a file.
    *

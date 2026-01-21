@@ -775,6 +775,14 @@ public final class RemoteOptions extends CommonRemoteOptions {
   /** The maximum size of an outbound message sent via a gRPC channel. */
   public int maxOutboundMessageSize = 1024 * 1024;
 
+  // FastCDC chunking constants for deduplicating large blobs.
+  public static final int CHUNKING_AVERAGE_SIZE = 512 * 1024;
+  public static final int CHUNKING_MIN_SIZE = CHUNKING_AVERAGE_SIZE / 4;
+  public static final int CHUNKING_MAX_SIZE = CHUNKING_AVERAGE_SIZE * 4;
+  public static final int CHUNKING_THRESHOLD = CHUNKING_MAX_SIZE;
+  public static final int CHUNKING_NORMALIZATION_LEVEL = 2;
+  public static final long CHUNKING_SEED = 0L;
+
   /** Returns {@code true} if remote cache or disk cache is enabled. */
   public boolean isRemoteCacheEnabled() {
     return !Strings.isNullOrEmpty(remoteCache)

@@ -1,4 +1,5 @@
 load("@rules_java//java:defs.bzl", "java_library", "java_test")
+load("//src:java_opt_binary.bzl", "java_opt_binary")
 
 package(
     default_applicable_licenses = ["//:license"],
@@ -63,6 +64,7 @@ java_library(
             "BuildWithoutTheBytesIntegrationTest.java",
             "BuildWithoutTheBytesIntegrationTestBase.java",
             "DiskCacheIntegrationTest.java",
+            "FastCDCBenchmark.java",
         ],
     ),
     deps = [
@@ -287,5 +289,17 @@ java_test(
         "//third_party:junit4",
         "//third_party:truth",
         "@remoteapis//:build_bazel_remote_execution_v2_remote_execution_java_proto",
+    ],
+)
+
+java_opt_binary(
+    name = "fastcdc_benchmark",
+    srcs = ["FastCDCBenchmark.java"],
+    main_class = "org.openjdk.jmh.Main",
+    deps = [
+        "//src/main/java/com/google/devtools/build/lib/remote",
+        "//src/main/java/com/google/devtools/build/lib/remote/util:digest_utils",
+        "//src/main/java/com/google/devtools/build/lib/vfs",
+        "//third_party:jmh",
     ],
 )
