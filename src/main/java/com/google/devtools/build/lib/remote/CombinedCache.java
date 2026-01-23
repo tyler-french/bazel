@@ -440,6 +440,25 @@ public class CombinedCache extends AbstractReferenceCounted {
       RemoteActionExecutionContext context, Digest digest, OutputStream out) {
     checkState(remoteCacheClient != null && context.getReadCachePolicy().allowRemoteCache());
 
+    if (digest.getSizeBytes() > FastCDCChunker.CHUNKING_THRESHOLD
+        && remoteCacheClient instanceof GrpcCacheClient grpcClient) {
+      ChunkedBlobDownloader chunkedDownloader = grpcClient.getChunkedDownloader();
+      if (chunkedDownloader != null) {
+        return Futures.catchingAsync(
+            chunkedDownloader.downloadChunked(context, digest, out),
+            CacheNotFoundException.class,
+            (e) -> regularDownloadBlobFromRemote(context, digest, out),
+            directExecutor());
+      }
+    }
+
+    return regularDownloadBlobFromRemote(context, digest, out);
+  }
+
+  private ListenableFuture<Void> regularDownloadBlobFromRemote(
+      RemoteActionExecutionContext context, Digest digest, OutputStream out) {
+    checkState(remoteCacheClient != null && context.getReadCachePolicy().allowRemoteCache());
+
     if (diskCacheClient != null && context.getWriteCachePolicy().allowDiskCache()) {
       Path tempPath = diskCacheClient.getTempPath();
       LazyFileOutputStream tempOut = new LazyFileOutputStream(tempPath);

@@ -18,6 +18,7 @@ import com.google.common.util.concurrent.ListenableFuture;
 import com.google.devtools.build.lib.actions.cache.VirtualActionInput;
 import com.google.devtools.build.lib.remote.common.RemoteActionExecutionContext;
 import com.google.devtools.build.lib.remote.common.RemotePathResolver;
+import com.google.devtools.build.lib.remote.FastCDCChunker.ChunkRef;
 import com.google.devtools.build.lib.vfs.Path;
 import java.io.IOException;
 
@@ -37,6 +38,14 @@ public interface MerkleTreeUploader {
   /** Uploads a virtual action input to the remote cache. */
   ListenableFuture<Void> uploadVirtualActionInput(
       RemoteActionExecutionContext context, Digest digest, VirtualActionInput virtualActionInput);
+
+  /**
+   * Uploads a chunk from a file to the remote cache.
+   *
+   * <p>Reads {@code chunk.length()} bytes starting at {@code chunk.offset()} from the file.
+   */
+  ListenableFuture<Void> uploadChunk(
+      RemoteActionExecutionContext context, Digest digest, Path file, ChunkRef chunk);
 
   /**
    * Ensures that all inputs as well as metadata protos in the given Merkle tree are present in the

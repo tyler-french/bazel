@@ -245,7 +245,8 @@ public class RemoteExecutionService {
                 : null,
             buildRequestId,
             commandId,
-            workspaceName);
+            workspaceName,
+            remoteOptions.experimentalRemoteCacheChunking);
 
     this.scrubber = remoteOptions.scrubber;
 

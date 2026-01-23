@@ -63,8 +63,10 @@ import com.google.devtools.build.lib.concurrent.TaskDeduplicator;
 import com.google.devtools.build.lib.exec.SpawnRunner.SpawnExecutionContext;
 import com.google.devtools.build.lib.profiler.Profiler;
 import com.google.devtools.build.lib.profiler.SilentCloseable;
+import com.google.devtools.build.lib.remote.FastCDCChunker;
 import com.google.devtools.build.lib.remote.Scrubber;
 import com.google.devtools.build.lib.remote.Scrubber.SpawnScrubber;
+import com.google.devtools.build.lib.remote.merkletree.MerkleTree.ChunkedFile;
 import com.google.devtools.build.lib.remote.common.BulkTransferException;
 import com.google.devtools.build.lib.remote.common.RemoteActionExecutionContext;
 import com.google.devtools.build.lib.remote.common.RemoteActionExecutionContext.CachePolicy;
@@ -170,6 +172,7 @@ public final class MerkleTreeComputer {
 
   private final DigestUtil digestUtil;
   @Nullable private final MerkleTreeUploader merkleTreeUploader;
+  @Nullable private final FastCDCChunker chunker;
   private final String buildRequestId;
   private final String commandId;
   private final String workspaceName;
@@ -183,9 +186,11 @@ public final class MerkleTreeComputer {
       @Nullable MerkleTreeUploader remoteExecutionCache,
       String buildRequestId,
       String commandId,
-      String workspaceName) {
+      String workspaceName,
+      boolean enableChunking) {
     this.digestUtil = digestUtil;
     this.merkleTreeUploader = remoteExecutionCache;
+    this.chunker = enableChunking ? new FastCDCChunker(digestUtil) : null;
     this.buildRequestId = buildRequestId;
     this.commandId = commandId;
     this.workspaceName = workspaceName;
@@ -194,7 +199,8 @@ public final class MerkleTreeComputer {
     this.emptyTree =
         new MerkleTree.Uploadable(
             new MerkleTree.RootOnly.BlobsUploaded(emptyDigest, 0, 0),
-            ImmutableMap.of(emptyDigest, emptyBlob));
+            ImmutableMap.of(emptyDigest, emptyBlob),
+            ImmutableList.of());
   }
 
   /** Specifies which blobs should be retained in the Merkle tree. */
@@ -470,6 +476,7 @@ public final class MerkleTreeComputer {
     long inputFiles = 0;
     long inputBytes = 0;
     var blobs = ImmutableMap.<Digest, Object>builder();
+    var chunkedFiles = ImmutableList.<MerkleTree.ChunkedFile>builder();
     Deque<Directory.Builder> directoryStack = new ArrayDeque<>();
     directoryStack.push(Directory.newBuilder());
 
@@ -542,7 +549,8 @@ public final class MerkleTreeComputer {
               return new MerkleTree.Uploadable(
                   new MerkleTree.RootOnly.BlobsUploaded(
                       directoryBlobDigest, inputFiles, inputBytes),
-                  builtBlobs);
+                  builtBlobs,
+                  chunkedFiles.build());
             }
           }
           topDirectory
@@ -621,7 +629,8 @@ public final class MerkleTreeComputer {
             var digest = DigestUtil.buildDigest(metadata.getDigest(), metadata.getSize());
             addFile(currentDirectory, name, digest, nodeProperties);
             if (blobPolicy != BlobPolicy.DISCARD && digest.getSizeBytes() != 0) {
-              blobs.put(digest, artifactPathResolver.toPath(fileOrSourceDirectory));
+              var filePath = artifactPathResolver.toPath(fileOrSourceDirectory);
+              addFileOrChunk(filePath, digest, blobs, chunkedFiles);
             }
             inputFiles++;
             inputBytes += digest.getSizeBytes();
@@ -651,7 +660,7 @@ public final class MerkleTreeComputer {
           var digest = digestUtil.compute(inputPath);
           addFile(currentDirectory, name, digest, nodeProperties);
           if (blobPolicy != BlobPolicy.DISCARD && digest.getSizeBytes() != 0) {
-            blobs.put(digest, inputPath);
+            addFileOrChunk(inputPath, digest, blobs, chunkedFiles);
           }
           inputFiles++;
           inputBytes += digest.getSizeBytes();
@@ -660,6 +669,21 @@ public final class MerkleTreeComputer {
     }
 
     throw new IllegalStateException("not reached");
+  }
+
+  private void addFileOrChunk(
+      Path path,
+      Digest digest,
+      ImmutableMap.Builder<Digest, Object> blobs,
+      ImmutableList.Builder<MerkleTree.ChunkedFile> chunkedFiles)
+      throws IOException {
+    if (chunker != null && digest.getSizeBytes() > FastCDCChunker.CHUNKING_THRESHOLD) {
+      try (var input = path.getInputStream()) {
+        chunkedFiles.add(new ChunkedFile(path, digest, chunker.chunkToRefs(input)));
+      }
+    } else {
+      blobs.put(digest, path);
+    }
   }
 
   private ListenableFuture<

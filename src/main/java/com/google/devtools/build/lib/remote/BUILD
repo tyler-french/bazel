@@ -29,6 +29,7 @@ java_library(
         ["*.java"],
         exclude = [
             "ExecutionStatusException.java",
+            "FastCDCChunker.java",
             "ReferenceCountedChannel.java",
             "ChannelConnectionWithServerCapabilitiesFactory.java",
             "RemoteRetrier.java",
@@ -52,6 +53,7 @@ java_library(
         ":ReferenceCountedChannel",
         ":Retrier",
         ":abstract_action_input_prefetcher",
+        ":fast_cdc_chunker",
         ":lease_service",
         ":remote_important_output_handler",
         ":remote_output_checker",
@@ -286,6 +288,17 @@ java_library(
 java_library(
     name = "store",
     srcs = ["Store.java"],
+)
+
+java_library(
+    name = "fast_cdc_chunker",
+    srcs = ["FastCDCChunker.java"],
+    deps = [
+        "//src/main/java/com/google/devtools/build/lib/remote/options",
+        "//src/main/java/com/google/devtools/build/lib/remote/util:digest_utils",
+        "//third_party:guava",
+        "@remoteapis//:build_bazel_remote_execution_v2_remote_execution_java_proto",
+    ],
 )
 
 java_library(

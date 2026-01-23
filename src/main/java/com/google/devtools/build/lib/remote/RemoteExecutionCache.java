@@ -32,6 +32,7 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.flogger.GoogleLogger;
+import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.devtools.build.lib.actions.cache.VirtualActionInput;
 import com.google.devtools.build.lib.profiler.Profiler;
@@ -42,6 +43,7 @@ import com.google.devtools.build.lib.remote.common.RemoteCacheClient;
 import com.google.devtools.build.lib.remote.common.RemoteCacheClient.Blob;
 import com.google.devtools.build.lib.remote.common.RemotePathResolver;
 import com.google.devtools.build.lib.remote.disk.DiskCacheClient;
+import com.google.devtools.build.lib.remote.FastCDCChunker.ChunkRef;
 import com.google.devtools.build.lib.remote.merkletree.MerkleTree;
 import com.google.devtools.build.lib.remote.merkletree.MerkleTreeUploader;
 import com.google.devtools.build.lib.remote.util.DigestUtil;
@@ -166,6 +168,46 @@ public class RemoteExecutionCache extends CombinedCache implements MerkleTreeUpl
       }
       throw e;
     }
+
+    // After all chunk uploads complete, call SpliceBlob for each ChunkedFile
+    // to register the blob as the concatenation of its chunks.
+    callSpliceBlobForChunkedFiles(context, merkleTree);
+  }
+
+  private void callSpliceBlobForChunkedFiles(
+      RemoteActionExecutionContext context, MerkleTree.Uploadable merkleTree)
+      throws IOException, InterruptedException {
+    var chunkedFiles = merkleTree.chunkedFiles();
+    if (chunkedFiles.isEmpty()) {
+      return;
+    }
+
+    var spliceFutures =
+        chunkedFiles.stream()
+            .map(
+                chunkedFile -> {
+                  var chunkDigests =
+                      chunkedFile.chunks().stream()
+                          .map(ChunkRef::digest)
+                          .collect(toImmutableList());
+                  return remoteCacheClient.spliceBlob(
+                      context, chunkedFile.blobDigest(), chunkDigests);
+                })
+            .filter(future -> future != null)
+            .collect(toImmutableList());
+
+    if (spliceFutures.isEmpty()) {
+      return;
+    }
+
+    try {
+      Futures.allAsList(spliceFutures).get();
+    } catch (java.util.concurrent.ExecutionException e) {
+      Throwable cause = e.getCause();
+      Throwables.throwIfInstanceOf(cause, IOException.class);
+      Throwables.throwIfInstanceOf(cause, InterruptedException.class);
+      throw new IOException("SpliceBlob failed", cause);
+    }
   }
 
   @Override
@@ -253,6 +295,74 @@ public class RemoteExecutionCache extends CombinedCache implements MerkleTreeUpl
   public ListenableFuture<Void> uploadBlob(
       RemoteActionExecutionContext context, Digest digest, byte[] data) {
     return remoteCacheClient.uploadBlob(context, digest, () -> new ByteArrayInputStream(data));
+  }
+
+  @Override
+  public ListenableFuture<Void> uploadChunk(
+      RemoteActionExecutionContext context, Digest digest, Path file, ChunkRef chunk) {
+    return remoteCacheClient.uploadBlob(
+        context,
+        digest,
+        () -> {
+          var input = file.getInputStream();
+          long skipped = input.skip(chunk.offset());
+          if (skipped != chunk.offset()) {
+            input.close();
+            throw new IOException(
+                format(
+                    "Failed to skip to offset %d in file %s (skipped %d)",
+                    chunk.offset(), file, skipped));
+          }
+          return new LimitedInputStream(input, chunk.length());
+        });
+  }
+
+  /** An InputStream that reads at most a specified number of bytes. */
+  private static class LimitedInputStream extends java.io.FilterInputStream {
+    private int remaining;
+
+    LimitedInputStream(java.io.InputStream in, int limit) {
+      super(in);
+      this.remaining = limit;
+    }
+
+    @Override
+    public int read() throws IOException {
+      if (remaining <= 0) {
+        return -1;
+      }
+      int result = super.read();
+      if (result != -1) {
+        remaining--;
+      }
+      return result;
+    }
+
+    @Override
+    public int read(byte[] b, int off, int len) throws IOException {
+      if (remaining <= 0) {
+        return -1;
+      }
+      int toRead = Math.min(len, remaining);
+      int result = super.read(b, off, toRead);
+      if (result > 0) {
+        remaining -= result;
+      }
+      return result;
+    }
+
+    @Override
+    public long skip(long n) throws IOException {
+      long toSkip = Math.min(n, remaining);
+      long skipped = super.skip(toSkip);
+      remaining -= Math.toIntExact(skipped);
+      return skipped;
+    }
+
+    @Override
+    public int available() throws IOException {
+      return Math.min(super.available(), remaining);
+    }
   }
 
   private ListenableFuture<Void> uploadBlob(
