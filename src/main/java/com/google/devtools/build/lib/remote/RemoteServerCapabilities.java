@@ -17,6 +17,7 @@ package com.google.devtools.build.lib.remote;
 import build.bazel.remote.execution.v2.CacheCapabilities;
 import build.bazel.remote.execution.v2.CapabilitiesGrpc;
 import build.bazel.remote.execution.v2.CapabilitiesGrpc.CapabilitiesFutureStub;
+import build.bazel.remote.execution.v2.ChunkingFunction;
 import build.bazel.remote.execution.v2.Compressor;
 import build.bazel.remote.execution.v2.DigestFunction;
 import build.bazel.remote.execution.v2.ExecutionCapabilities;
@@ -244,6 +245,24 @@ class RemoteServerCapabilities {
           && !cacheCap.getSupportedCompressorsList().contains(Compressor.Value.ZSTD)) {
         result.addError(
             "--remote_cache_compression requested but remote does not support compression");
+      }
+
+      if (remoteOptions.experimentalRemoteCacheChunking) {
+        if (!cacheCap.getSplitBlobSupport()) {
+          result.addError(
+              "--experimental_remote_cache_chunking requested but remote does not support"
+                  + " SplitBlob");
+        }
+        if (!cacheCap.getSpliceBlobSupport()) {
+          result.addError(
+              "--experimental_remote_cache_chunking requested but remote does not support"
+                  + " SpliceBlob");
+        }
+        if (!cacheCap.hasFastCdc2020Params()) {
+          result.addError(
+              "--experimental_remote_cache_chunking requested but remote does not support"
+                  + " FastCDC 2020 chunking algorithm");
+        }
       }
 
       // Check result cache priority is in the supported range.
