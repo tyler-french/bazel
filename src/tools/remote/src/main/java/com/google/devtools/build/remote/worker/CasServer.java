@@ -27,24 +27,35 @@ import build.bazel.remote.execution.v2.FindMissingBlobsResponse;
 import build.bazel.remote.execution.v2.GetTreeRequest;
 import build.bazel.remote.execution.v2.GetTreeResponse;
 import build.bazel.remote.execution.v2.RequestMetadata;
+import build.bazel.remote.execution.v2.SpliceBlobRequest;
+import build.bazel.remote.execution.v2.SpliceBlobResponse;
+import build.bazel.remote.execution.v2.SplitBlobRequest;
+import build.bazel.remote.execution.v2.SplitBlobResponse;
 import com.google.common.flogger.GoogleLogger;
 import com.google.devtools.build.lib.remote.common.CacheNotFoundException;
 import com.google.devtools.build.lib.remote.common.RemoteActionExecutionContext;
 import com.google.devtools.build.lib.remote.util.TracingMetadataUtils;
+import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.rpc.Code;
 import io.grpc.stub.StreamObserver;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Deque;
 import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /** A basic implementation of a {@link ContentAddressableStorageImplBase} service. */
 final class CasServer extends ContentAddressableStorageImplBase {
   private static final GoogleLogger logger = GoogleLogger.forEnclosingClass();
   static final long MAX_BATCH_SIZE_BYTES = 1024 * 1024 * 4;
   private final OnDiskBlobStoreCache cache;
+  private final Map<Digest, List<Digest>> splicedBlobs = new ConcurrentHashMap<>();
 
   public CasServer(OnDiskBlobStoreCache cache) {
     this.cache = cache;
@@ -144,5 +155,78 @@ final class CasServer extends ContentAddressableStorageImplBase {
     }
     responseObserver.onNext(responseBuilder.build());
     responseObserver.onCompleted();
+  }
+
+  /**
+   * Returns the chunk digests for a blob that was previously stored via spliceBlob.
+   * Clients use this to download large blobs in smaller pieces.
+   */
+  @Override
+  public void splitBlob(
+      SplitBlobRequest request, StreamObserver<SplitBlobResponse> responseObserver) {
+    Digest blobDigest = request.getBlobDigest();
+
+    List<Digest> chunkDigests = splicedBlobs.get(blobDigest);
+    SplitBlobResponse.Builder response = SplitBlobResponse.newBuilder();
+    if (chunkDigests != null) {
+      response.addAllChunkDigests(chunkDigests);
+    }
+    responseObserver.onNext(response.build());
+    responseObserver.onCompleted();
+  }
+
+  /**
+   * Stores a mapping from a blob digest to the list of chunk digests that compose it.
+   *
+   * <p>All chunks must already exist in the CAS. The concatenated chunks are verified
+   * to match the expected blob digest before storing the mapping.
+   */
+  @Override
+  public void spliceBlob(
+      SpliceBlobRequest request, StreamObserver<SpliceBlobResponse> responseObserver) {
+    RequestMetadata meta = TracingMetadataUtils.fromCurrentContext();
+    RemoteActionExecutionContext context = RemoteActionExecutionContext.create(meta);
+
+    Digest blobDigest = request.getBlobDigest();
+    List<Digest> chunkDigests = request.getChunkDigestsList();
+
+    try {
+      // Verify all chunks exist in the cache.
+      for (Digest chunkDigest : chunkDigests) {
+        if (!cache.refresh(chunkDigest)) {
+          responseObserver.onError(StatusUtils.notFoundError(chunkDigest));
+          return;
+        }
+      }
+
+      // Read and concatenate all chunks to verify the combined hash.
+      ByteArrayOutputStream combined = new ByteArrayOutputStream();
+      for (Digest chunkDigest : chunkDigests) {
+        byte[] chunkData = getFromFuture(cache.downloadBlob(context, chunkDigest));
+        combined.write(chunkData);
+      }
+
+      byte[] blobData = combined.toByteArray();
+      Digest computedDigest = cache.getDigestUtil().compute(blobData);
+      if (!computedDigest.equals(blobDigest)) {
+        String err = "Splice digest " + blobDigest + " did not match computed digest: " + computedDigest;
+        responseObserver.onError(StatusUtils.invalidArgumentError("blob_digest", err));
+        return;
+      }
+
+      // Record the blob-to-chunks mapping for splitBlob lookups.
+      splicedBlobs.put(blobDigest, new ArrayList<>(chunkDigests));
+
+      responseObserver.onNext(
+          SpliceBlobResponse.newBuilder().setBlobDigest(blobDigest).build());
+      responseObserver.onCompleted();
+    } catch (CacheNotFoundException e) {
+      responseObserver.onError(StatusUtils.notFoundError(e.getMissingDigest()));
+    } catch (InterruptedException e) {
+      responseObserver.onError(StatusUtils.interruptedError(blobDigest));
+    } catch (Exception e) {
+      logger.atWarning().withCause(e).log("SpliceBlob request failed");
+      responseObserver.onError(StatusUtils.internalError(e));
+    }
   }
 }
