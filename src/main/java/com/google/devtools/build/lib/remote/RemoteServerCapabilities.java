@@ -246,6 +246,19 @@ class RemoteServerCapabilities {
             "--remote_cache_compression requested but remote does not support compression");
       }
 
+      if (remoteOptions.experimentalRemoteCacheChunking) {
+        if (!cacheCap.getSplitBlobSupport()) {
+          result.addError(
+              "--experimental_remote_cache_chunking requested but remote does not support"
+                  + " SplitBlob");
+        }
+        if (!cacheCap.getSpliceBlobSupport()) {
+          result.addError(
+              "--experimental_remote_cache_chunking requested but remote does not support"
+                  + " SpliceBlob");
+        }
+      }
+
       // Check result cache priority is in the supported range.
       checkPriorityInRange(
           remoteOptions.remoteResultCachePriority,

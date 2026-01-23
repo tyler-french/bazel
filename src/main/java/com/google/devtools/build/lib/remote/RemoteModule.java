@@ -736,6 +736,10 @@ public final class RemoteModule extends BlazeModule {
         }
       }
 
+      if (remoteCacheClient instanceof GrpcCacheClient grpcCacheClient) {
+        grpcCacheClient.setDiskCacheClient(diskCacheClient);
+      }
+
       RemoteRetrier execRetrier =
           new RemoteRetrier(
               remoteOptions, RemoteRetrier.GRPC_RESULT_CLASSIFIER, retryScheduler, circuitBreaker);
@@ -773,6 +777,10 @@ public final class RemoteModule extends BlazeModule {
           handleInitFailure(env, e, Code.CACHE_INIT_FAILURE);
           return;
         }
+      }
+
+      if (remoteCacheClient instanceof GrpcCacheClient grpcCacheClient) {
+        grpcCacheClient.setDiskCacheClient(diskCacheClient);
       }
 
       CombinedCache combinedCache =

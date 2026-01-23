@@ -15,10 +15,12 @@ package com.google.devtools.build.lib.remote.merkletree;
 
 import build.bazel.remote.execution.v2.Digest;
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.devtools.build.lib.actions.cache.VirtualActionInput;
+import com.google.devtools.build.lib.remote.FastCDCChunker.ChunkRef;
 import com.google.devtools.build.lib.remote.common.RemoteActionExecutionContext;
 import com.google.devtools.build.lib.remote.common.RemotePathResolver;
 import com.google.devtools.build.lib.vfs.Path;
@@ -49,6 +51,17 @@ public sealed interface MerkleTree {
   RootOnly root();
 
   /**
+   * A large file that will be uploaded as CDC (Content-Defined Chunking) chunks.
+   *
+   * <p>Instead of uploading the file as a single blob, we upload individual chunks and then call
+   * SpliceBlob to register the blob as the concatenation of those chunks.
+   *
+   * <p>Note: We don't store chunk data here - just offset+length references into the original file.
+   * This allows the MerkleTree to be memory-efficient even for large files.
+   */
+  record ChunkedFile(Path path, Digest blobDigest, ImmutableList<ChunkRef> chunks) {}
+
+  /**
    * A {@link MerkleTree} that doesn't retain any blobs, either because they have already been
    * uploaded or because only the root digest is needed (e.g., for a remote cache check).
    */
@@ -75,10 +88,32 @@ public sealed interface MerkleTree {
   final class Uploadable implements MerkleTree {
     private final RootOnly.BlobsUploaded root;
     private final ImmutableMap<Digest, /* byte[] | Path | VirtualActionInput */ Object> blobs;
+    private final ImmutableList<ChunkedFile> chunkedFiles;
+    private final ImmutableMap<Digest, ChunkSource> chunkSources;
+    record ChunkSource(Path file, ChunkRef chunk) {}
 
-    Uploadable(RootOnly.BlobsUploaded root, ImmutableMap<Digest, Object> blobs) {
+    Uploadable(
+        RootOnly.BlobsUploaded root,
+        ImmutableMap<Digest, Object> blobs,
+        ImmutableList<ChunkedFile> chunkedFiles) {
       this.root = root;
       this.blobs = blobs;
+      this.chunkedFiles = chunkedFiles;
+      this.chunkSources = buildChunkSources(chunkedFiles);
+    }
+
+    private static ImmutableMap<Digest, ChunkSource> buildChunkSources(
+        ImmutableList<ChunkedFile> chunkedFiles) {
+      if (chunkedFiles.isEmpty()) {
+        return ImmutableMap.of();
+      }
+      ImmutableMap.Builder<Digest, ChunkSource> builder = ImmutableMap.builder();
+      for (ChunkedFile file : chunkedFiles) {
+        for (ChunkRef chunk : file.chunks()) {
+          builder.put(chunk.digest(), new ChunkSource(file.path(), chunk));
+        }
+      }
+      return builder.buildOrThrow();
     }
 
     @Override
@@ -97,7 +132,14 @@ public sealed interface MerkleTree {
     }
 
     public ImmutableSet<Digest> allDigests() {
-      return blobs.keySet();
+      return ImmutableSet.<Digest>builder()
+          .addAll(blobs.keySet())
+          .addAll(chunkSources.keySet())
+          .build();
+    }
+
+    public ImmutableList<ChunkedFile> chunkedFiles() {
+      return chunkedFiles;
     }
 
     @VisibleForTesting
@@ -119,15 +161,25 @@ public sealed interface MerkleTree {
         RemoteActionExecutionContext context,
         RemotePathResolver remotePathResolver,
         Digest digest) {
-      return switch (blobs.get(digest)) {
-        case byte[] data -> Optional.of(uploader.uploadBlob(context, digest, data));
-        case Path path ->
-            Optional.of(uploader.uploadFile(context, remotePathResolver, digest, path));
-        case VirtualActionInput virtualActionInput ->
-            Optional.of(uploader.uploadVirtualActionInput(context, digest, virtualActionInput));
-        case null -> Optional.empty();
-        default -> throw new IllegalStateException("Unexpected blob type: " + blobs.get(digest));
-      };
+      Object blob = blobs.get(digest);
+      if (blob != null) {
+        return switch (blob) {
+          case byte[] data -> Optional.of(uploader.uploadBlob(context, digest, data));
+          case Path path ->
+              Optional.of(uploader.uploadFile(context, remotePathResolver, digest, path));
+          case VirtualActionInput virtualActionInput ->
+              Optional.of(uploader.uploadVirtualActionInput(context, digest, virtualActionInput));
+          default -> throw new IllegalStateException("Unexpected blob type: " + blob);
+        };
+      }
+
+      ChunkSource source = chunkSources.get(digest);
+      if (source != null) {
+        return Optional.of(
+            uploader.uploadChunk(context, digest, source.file(), source.chunk()));
+      }
+
+      return Optional.empty();
     }
   }
 }
