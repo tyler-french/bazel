@@ -64,6 +64,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -92,6 +94,10 @@ public class CombinedCache extends AbstractReferenceCounted {
 
   private final CountDownLatch closeCountDownLatch = new CountDownLatch(1);
   protected final AsyncTaskCache.NoResult<Digest> casUploadCache = AsyncTaskCache.NoResult.create();
+
+  @SuppressWarnings("AllowVirtualThreads")
+  private final ExecutorService virtualThreadExecutor =
+      Executors.newThreadPerTaskExecutor(Thread.ofVirtual().name("combined-cache-", 0).factory());
 
   @Nullable protected final RemoteCacheClient remoteCacheClient;
   @Nullable protected final DiskCacheClient diskCacheClient;
@@ -444,8 +450,16 @@ public class CombinedCache extends AbstractReferenceCounted {
         && remoteCacheClient instanceof GrpcCacheClient grpcClient) {
       ChunkedBlobDownloader chunkedDownloader = grpcClient.getChunkedDownloader();
       if (chunkedDownloader != null) {
+        // Wrap virtual thread call as ListenableFuture for legacy compatibility
+        ListenableFuture<Void> chunkedDownloadFuture =
+            Futures.submit(
+                () -> {
+                  chunkedDownloader.downloadChunked(context, digest, out);
+                  return null;
+                },
+                virtualThreadExecutor);
         return Futures.catchingAsync(
-            chunkedDownloader.downloadChunked(context, digest, out),
+            chunkedDownloadFuture,
             CacheNotFoundException.class,
             (e) -> regularDownloadBlobFromRemote(context, digest, out),
             directExecutor());

@@ -78,6 +78,8 @@ import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
@@ -97,6 +99,10 @@ public class GrpcCacheClient implements RemoteCacheClient, MissingDigestsFinder 
   private final int maxMissingBlobsDigestsPerMessage;
   @Nullable private final ChunkedBlobDownloader chunkedDownloader;
   @Nullable private final ChunkedBlobUploader chunkedUploader;
+
+  @SuppressWarnings("AllowVirtualThreads")
+  private final ExecutorService virtualThreadExecutor =
+      Executors.newThreadPerTaskExecutor(Thread.ofVirtual().name("grpc-cache-", 0).factory());
 
   private final AtomicBoolean closed = new AtomicBoolean();
 
@@ -269,7 +275,13 @@ public class GrpcCacheClient implements RemoteCacheClient, MissingDigestsFinder 
   public ListenableFuture<Void> uploadFile(
       RemoteActionExecutionContext context, Digest digest, Path file) {
     if (chunkedUploader != null && digest.getSizeBytes() > FastCDCChunker.CHUNKING_THRESHOLD) {
-      return chunkedUploader.uploadChunked(context, digest, file);
+      // Wrap virtual thread call as ListenableFuture for legacy compatibility
+      return Futures.submit(
+          () -> {
+            chunkedUploader.uploadChunked(context, digest, file);
+            return null;
+          },
+          virtualThreadExecutor);
     }
     return RemoteCacheClient.super.uploadFile(context, digest, file);
   }

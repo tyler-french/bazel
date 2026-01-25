@@ -14,28 +14,29 @@
 
 package com.google.devtools.build.lib.remote;
 
-import static com.google.common.util.concurrent.Futures.immediateFailedFuture;
-import static com.google.common.util.concurrent.MoreExecutors.directExecutor;
-
 import build.bazel.remote.execution.v2.Digest;
+import build.bazel.remote.execution.v2.SplitBlobResponse;
 import com.google.common.collect.ImmutableList;
-import com.google.common.util.concurrent.Futures;
+import com.google.common.flogger.GoogleLogger;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.devtools.build.lib.remote.common.CacheNotFoundException;
 import com.google.devtools.build.lib.remote.common.RemoteActionExecutionContext;
 import com.google.devtools.build.lib.remote.disk.DiskCacheClient;
+import java.io.IOException;
 import java.io.OutputStream;
+import java.util.concurrent.ExecutionException;
 import javax.annotation.Nullable;
 
 /**
  * Downloads blobs by sequentially fetching chunks via the SplitBlob API, reading through the disk
- * cache when available.
+ * cache when available. This class should be run on virtual threads.
  */
 public class ChunkedBlobDownloader {
+  private static final GoogleLogger logger = GoogleLogger.forEnclosingClass();
+
   private final GrpcCacheClient grpcCacheClient;
 
-  @Nullable
-  private DiskCacheClient diskCacheClient;
+  @Nullable private DiskCacheClient diskCacheClient;
 
   public ChunkedBlobDownloader(GrpcCacheClient grpcCacheClient) {
     this.grpcCacheClient = grpcCacheClient;
@@ -46,63 +47,86 @@ public class ChunkedBlobDownloader {
   }
 
   /**
-   * Downloads a blob using chunked download via the SplitBlob API.
-   *
-   * <p>Throws {@link CacheNotFoundException} (via the returned future) if chunked download is not
-   * available for this blob, allowing the caller to fall back to regular download.
+   * Downloads a blob using chunked download via the SplitBlob API. This should be called from a
+   * virtual thread.
    */
-  public ListenableFuture<Void> downloadChunked(
-      RemoteActionExecutionContext context, Digest blobDigest, OutputStream out) {
-    var splitResponseFuture = grpcCacheClient.getSplitBlob(context, blobDigest);
+  public void downloadChunked(
+      RemoteActionExecutionContext context, Digest blobDigest, OutputStream out)
+      throws CacheNotFoundException, InterruptedException {
+    try {
+      doDownloadChunked(context, blobDigest, out);
+    } catch (IOException e) {
+      logger.atWarning().withCause(e).log("Chunked download failed for %s", blobDigest.getHash());
+      throw new CacheNotFoundException(blobDigest);
+    }
+  }
+
+  private void doDownloadChunked(
+      RemoteActionExecutionContext context, Digest blobDigest, OutputStream out)
+      throws IOException, InterruptedException {
+    ListenableFuture<SplitBlobResponse> splitResponseFuture =
+        grpcCacheClient.getSplitBlob(context, blobDigest);
     if (splitResponseFuture == null) {
-      return immediateFailedFuture(new CacheNotFoundException(blobDigest));
+      throw new CacheNotFoundException(blobDigest);
     }
 
-    return Futures.catchingAsync(
-        Futures.transformAsync(
-            splitResponseFuture,
-            splitResponse -> {
-              if (splitResponse == null || splitResponse.getChunkDigestsCount() == 0) {
-                throw new CacheNotFoundException(blobDigest);
-              }
+    SplitBlobResponse splitResponse;
+    try {
+      splitResponse = splitResponseFuture.get();
+    } catch (ExecutionException e) {
+      throw new IOException("Failed to get split blob info", e.getCause());
+    }
 
-              ImmutableList<Digest> chunkDigests =
-                  ImmutableList.copyOf(splitResponse.getChunkDigestsList());
+    if (splitResponse == null || splitResponse.getChunkDigestsCount() == 0) {
+      throw new CacheNotFoundException(blobDigest);
+    }
 
-              return downloadAndReassembleChunks(context, chunkDigests, out);
-            },
-            directExecutor()),
-        io.grpc.StatusRuntimeException.class,
-        e -> {
-          throw new CacheNotFoundException(blobDigest);
-        },
-        directExecutor());
+    ImmutableList<Digest> chunkDigests =
+        ImmutableList.copyOf(splitResponse.getChunkDigestsList());
+
+    downloadAndReassembleChunks(context, chunkDigests, out);
   }
 
-  private ListenableFuture<Void> downloadAndReassembleChunks(
-      RemoteActionExecutionContext context,
-      ImmutableList<Digest> chunkDigests,
-      OutputStream out) {
-
-    ListenableFuture<Void> chain = Futures.immediateVoidFuture();
+  private void downloadAndReassembleChunks(
+      RemoteActionExecutionContext context, ImmutableList<Digest> chunkDigests, OutputStream out)
+      throws IOException, InterruptedException {
     for (Digest chunkDigest : chunkDigests) {
-      chain = Futures.transformAsync(
-          chain,
-          unused -> downloadChunk(context, chunkDigest, out),
-          directExecutor());
+      downloadChunk(context, chunkDigest, out);
     }
-    return chain;
   }
 
-  private ListenableFuture<Void> downloadChunk(
-      RemoteActionExecutionContext context, Digest chunkDigest, OutputStream out) {
-    if (diskCacheClient != null && context.getReadCachePolicy().allowDiskCache()) {
-      return Futures.catchingAsync(
-          diskCacheClient.downloadBlob(chunkDigest, out),
-          CacheNotFoundException.class,
-          unused -> grpcCacheClient.downloadBlob(context, chunkDigest, out),
-          directExecutor());
+  private void downloadChunk(
+      RemoteActionExecutionContext context, Digest chunkDigest, OutputStream out)
+      throws IOException, InterruptedException {
+    if (!loadFromDiskCache(context, chunkDigest, out)) {
+      downloadFromRemote(context, chunkDigest, out);
     }
-    return grpcCacheClient.downloadBlob(context, chunkDigest, out);
+  }
+
+  private boolean loadFromDiskCache(
+      RemoteActionExecutionContext context, Digest digest, OutputStream out)
+      throws IOException, InterruptedException {
+    if (diskCacheClient == null || !context.getReadCachePolicy().allowDiskCache()) {
+      return false;
+    }
+    try {
+      diskCacheClient.downloadBlob(digest, out).get();
+      return true;
+    } catch (ExecutionException e) {
+      if (e.getCause() instanceof CacheNotFoundException) {
+        return false;
+      }
+      throw new IOException("Disk cache read failed", e.getCause());
+    }
+  }
+
+  private void downloadFromRemote(
+      RemoteActionExecutionContext context, Digest digest, OutputStream out)
+      throws IOException, InterruptedException {
+    try {
+      grpcCacheClient.downloadBlob(context, digest, out).get();
+    } catch (ExecutionException e) {
+      throw new IOException("Remote download failed", e.getCause());
+    }
   }
 }

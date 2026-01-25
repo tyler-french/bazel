@@ -14,16 +14,11 @@
 
 package com.google.devtools.build.lib.remote;
 
-import static com.google.common.util.concurrent.Futures.immediateFailedFuture;
-import static com.google.common.util.concurrent.Futures.immediateVoidFuture;
-import static com.google.common.util.concurrent.MoreExecutors.directExecutor;
-
 import build.bazel.remote.execution.v2.Digest;
 import build.bazel.remote.execution.v2.SplitBlobResponse;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.flogger.GoogleLogger;
-import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.devtools.build.lib.remote.FastCDCChunker.ChunkRef;
 import com.google.devtools.build.lib.remote.common.RemoteActionExecutionContext;
@@ -37,25 +32,47 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicReference;
 import javax.annotation.Nullable;
 
 /**
- * Uploads blobs in chunks using CDC (Content-Defined Chunking).
+ * Uploads blobs in chunks using Content-Defined Chunking with FastCDC 2020.
+ * In the future, we should check the server chunking algorithm configuration
+ * and adapt accordingly.
  *
  * <p>Upload flow for blobs above threshold:
+ *
  * <ol>
  *   <li>Chunk file with FastCDC (stream to disk cache if available)
  *   <li>Call findMissingDigests on chunk digests
  *   <li>Upload only missing chunks
  *   <li>Call SpliceBlob to register the blob as the concatenation of chunks
  * </ol>
+ *
+ * <p>This class should be run on virtual threads.
  */
 public class ChunkedBlobUploader {
   private static final GoogleLogger logger = GoogleLogger.forEnclosingClass();
 
+  private static class InFlightUpload {
+    final CountDownLatch latch = new CountDownLatch(1);
+    final AtomicReference<Throwable> error = new AtomicReference<>();
+  }
+
   private final GrpcCacheClient grpcCacheClient;
   private final FastCDCChunker chunker;
+  private final ConcurrentHashMap<Digest, InFlightUpload> inFlightChunkUploads =
+      new ConcurrentHashMap<>();
+
+  @SuppressWarnings("AllowVirtualThreads")
+  private final ExecutorService uploadExecutor =
+      Executors.newThreadPerTaskExecutor(Thread.ofVirtual().name("chunk-upload-", 0).factory());
 
   @Nullable private DiskCacheClient diskCacheClient;
 
@@ -68,45 +85,43 @@ public class ChunkedBlobUploader {
     this.diskCacheClient = diskCacheClient;
   }
 
-  public ListenableFuture<Void> uploadChunked(
-      RemoteActionExecutionContext context, Digest blobDigest, Path file) {
-        
-    ListenableFuture<SplitBlobResponse> splitFuture = grpcCacheClient.getSplitBlob(context, blobDigest);
+  /**
+   * Uploads a blob using chunked upload via CDC. This should be called from a virtual thread.
+   */
+  public void uploadChunked(RemoteActionExecutionContext context, Digest blobDigest, Path file)
+      throws IOException, InterruptedException {
+    if (isAlreadyChunkedOnServer(context, blobDigest)) {
+      return;
+    }
+    doChunkedUpload(context, blobDigest, file);
+  }
+
+  private boolean isAlreadyChunkedOnServer(
+      RemoteActionExecutionContext context, Digest blobDigest) throws InterruptedException {
+    ListenableFuture<SplitBlobResponse> splitFuture =
+        grpcCacheClient.getSplitBlob(context, blobDigest);
     if (splitFuture == null) {
-      return doChunkedUpload(context, blobDigest, file);
+      return false;
     }
-
-    return Futures.catchingAsync(
-        Futures.transformAsync(
-            splitFuture,
-            response -> {
-              if (response != null && response.getChunkDigestsCount() > 0) {
-                return immediateVoidFuture();
-              }
-              return doChunkedUpload(context, blobDigest, file);
-            },
-            directExecutor()),
-        Exception.class,
-        e -> doChunkedUpload(context, blobDigest, file),
-        directExecutor());
-  }
-
-  private ListenableFuture<Void> doChunkedUpload(
-      RemoteActionExecutionContext context, Digest blobDigest, Path file) {
     try {
-      ImmutableList<ChunkRef> chunkRefs = chunkFile(file);
-      if (chunkRefs.isEmpty()) {
-        return immediateVoidFuture();
-      }
-
-      return uploadChunksAndSplice(context, blobDigest, chunkRefs, file);
-    } catch (IOException e) {
-      logger.atWarning().withCause(e).log("ChunkedBlobUploader: Failed to chunk %s", blobDigest.getHash());
-      return immediateFailedFuture(e);
+      SplitBlobResponse response = splitFuture.get();
+      return response != null && response.getChunkDigestsCount() > 0;
+    } catch (ExecutionException e) {
+      return false;
     }
   }
 
-  private ImmutableList<ChunkRef> chunkFile(Path file) throws IOException {
+  private void doChunkedUpload(RemoteActionExecutionContext context, Digest blobDigest, Path file)
+      throws IOException, InterruptedException {
+    ImmutableList<ChunkRef> chunkRefs = chunkFile(file);
+    if (chunkRefs.isEmpty()) {
+      return;
+    }
+
+    uploadChunksAndSplice(context, blobDigest, chunkRefs, file);
+  }
+
+  private ImmutableList<ChunkRef> chunkFile(Path file) throws IOException, InterruptedException {
     ImmutableList<ChunkRef> chunkRefs;
     try (InputStream input = file.getInputStream()) {
       chunkRefs = chunker.chunkToRefs(input);
@@ -117,9 +132,6 @@ public class ChunkedBlobUploader {
         ByteString data = readChunkData(file, chunk);
         try {
           diskCacheClient.uploadBlob(chunk.digest(), data).get();
-        } catch (InterruptedException e) {
-          Thread.currentThread().interrupt();
-          throw new IOException("Interrupted while writing chunk to disk cache", e);
         } catch (ExecutionException e) {
           throw new IOException("Failed to write chunk to disk cache", e.getCause());
         }
@@ -129,39 +141,40 @@ public class ChunkedBlobUploader {
     return chunkRefs;
   }
 
-  private ListenableFuture<Void> uploadChunksAndSplice(
+  private void uploadChunksAndSplice(
       RemoteActionExecutionContext context,
       Digest blobDigest,
       ImmutableList<ChunkRef> chunkRefs,
-      Path file) {
+      Path file)
+      throws IOException, InterruptedException {
 
     ImmutableList<Digest> chunkDigests =
         chunkRefs.stream().map(ChunkRef::digest).collect(ImmutableList.toImmutableList());
 
-    ListenableFuture<ImmutableSet<Digest>> missingFuture =
-        grpcCacheClient.findMissingDigests(context, chunkDigests);
+    ImmutableSet<Digest> missingDigests;
+    try {
+      missingDigests = grpcCacheClient.findMissingDigests(context, chunkDigests).get();
+    } catch (ExecutionException e) {
+      throw new IOException("Failed to find missing digests", e.getCause());
+    }
 
-    return Futures.transformAsync(
-        missingFuture,
-        missingDigests -> {
-          ListenableFuture<Void> uploadFuture =
-              uploadMissingChunks(context, missingDigests, chunkRefs, file);
+    uploadMissingChunks(context, missingDigests, chunkRefs, file);
 
-          return Futures.transformAsync(
-              uploadFuture,
-              unused -> grpcCacheClient.spliceBlob(context, blobDigest, chunkDigests),
-              directExecutor());
-        },
-        directExecutor());
+    try {
+      grpcCacheClient.spliceBlob(context, blobDigest, chunkDigests).get();
+    } catch (ExecutionException e) {
+      throw new IOException("Failed to splice blob", e.getCause());
+    }
   }
 
-  private ListenableFuture<Void> uploadMissingChunks(
+  private void uploadMissingChunks(
       RemoteActionExecutionContext context,
       ImmutableSet<Digest> missingDigests,
       ImmutableList<ChunkRef> chunkRefs,
-      Path file) {
+      Path file)
+      throws IOException, InterruptedException {
     if (missingDigests.isEmpty()) {
-      return immediateVoidFuture();
+      return;
     }
 
     Map<Digest, ChunkRef> digestToRef = new HashMap<>();
@@ -171,22 +184,72 @@ public class ChunkedBlobUploader {
       }
     }
 
-    List<ListenableFuture<Void>> uploadFutures = new ArrayList<>(missingDigests.size());
+    List<Future<Void>> futures = new ArrayList<>(missingDigests.size());
     for (Digest chunkDigest : missingDigests) {
       ChunkRef ref = digestToRef.get(chunkDigest);
-      uploadFutures.add(uploadChunk(context, ref, file));
+      futures.add(
+          uploadExecutor.submit(
+              () -> {
+                uploadChunk(context, ref, file);
+                return null;
+              }));
     }
 
-    return Futures.whenAllSucceed(uploadFutures).call(() -> null, directExecutor());
+    List<IOException> errors = new ArrayList<>();
+    for (Future<Void> future : futures) {
+      try {
+        future.get();
+      } catch (ExecutionException e) {
+        Throwable cause = e.getCause();
+        if (cause instanceof IOException ioException) {
+          errors.add(ioException);
+        } else if (cause instanceof InterruptedException) {
+          Thread.currentThread().interrupt();
+          throw (InterruptedException) cause;
+        } else {
+          errors.add(new IOException("Chunk upload failed", cause));
+        }
+      }
+    }
+
+    if (!errors.isEmpty()) {
+      IOException first = errors.get(0);
+      for (int i = 1; i < errors.size(); i++) {
+        first.addSuppressed(errors.get(i));
+      }
+      throw first;
+    }
   }
 
-  private ListenableFuture<Void> uploadChunk(
-      RemoteActionExecutionContext context, ChunkRef chunk, Path file) {
+  private void uploadChunk(RemoteActionExecutionContext context, ChunkRef chunk, Path file)
+      throws IOException, InterruptedException {
+    Digest digest = chunk.digest();
+
+    InFlightUpload newUpload = new InFlightUpload();
+    InFlightUpload activeDuplicateUpload = inFlightChunkUploads.putIfAbsent(digest, newUpload);
+
+    if (activeDuplicateUpload != null) {
+      activeDuplicateUpload.latch.await();
+      if (activeDuplicateUpload.error.get() == null) {
+        return;
+      }
+
+      // Replace failed upload with new one
+      newUpload = new InFlightUpload();
+      if (inFlightChunkUploads.putIfAbsent(digest, newUpload) != null) {
+        return;
+      }
+    }
+
     try {
       ByteString data = readChunkData(file, chunk);
-      return grpcCacheClient.uploadBlob(context, chunk.digest(), data::newInput);
-    } catch (IOException e) {
-      return immediateFailedFuture(e);
+      grpcCacheClient.uploadBlob(context, digest, data::newInput).get();
+    } catch (ExecutionException e) {
+      newUpload.error.set(e.getCause());
+      throw new IOException("Failed to upload chunk", e.getCause());
+    } finally {
+      newUpload.latch.countDown();
+      inFlightChunkUploads.remove(digest, newUpload);
     }
   }
 
@@ -214,5 +277,4 @@ public class ChunkedBlobUploader {
       return ByteString.copyFrom(buf);
     }
   }
-
 }
