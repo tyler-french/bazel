@@ -77,7 +77,7 @@ public class ChunkedBlobDownloader {
       throw new IOException("Failed to get split blob info", e.getCause());
     }
 
-    if (splitResponse == null || splitResponse.getChunkDigestsCount() == 0) {
+    if (!isTrulyChunked(splitResponse, blobDigest)) {
       throw new CacheNotFoundException(blobDigest);
     }
 
@@ -85,6 +85,16 @@ public class ChunkedBlobDownloader {
         ImmutableList.copyOf(splitResponse.getChunkDigestsList());
 
     downloadAndReassembleChunks(context, chunkDigests, out);
+  }
+
+  private static boolean isTrulyChunked(SplitBlobResponse response, Digest blobDigest) {
+    if (response == null || response.getChunkDigestsCount() == 0) {
+      return false;
+    }
+    if (response.getChunkDigestsCount() == 1 && response.getChunkDigests(0).equals(blobDigest)) {
+      return false;
+    }
+    return true;
   }
 
   private void downloadAndReassembleChunks(

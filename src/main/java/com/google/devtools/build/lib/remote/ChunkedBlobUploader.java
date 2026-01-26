@@ -105,10 +105,20 @@ public class ChunkedBlobUploader {
     }
     try {
       SplitBlobResponse response = splitFuture.get();
-      return response != null && response.getChunkDigestsCount() > 0;
+      return isTrulyChunked(response, blobDigest);
     } catch (ExecutionException e) {
       return false;
     }
+  }
+
+  private static boolean isTrulyChunked(SplitBlobResponse response, Digest blobDigest) {
+    if (response == null || response.getChunkDigestsCount() == 0) {
+      return false;
+    }
+    if (response.getChunkDigestsCount() == 1 && response.getChunkDigests(0).equals(blobDigest)) {
+      return false;
+    }
+    return true;
   }
 
   private void doChunkedUpload(RemoteActionExecutionContext context, Digest blobDigest, Path file)
