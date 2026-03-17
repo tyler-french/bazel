@@ -470,7 +470,13 @@ public class RemoteSpawnCacheTest {
         remoteCacheClient = mock(RemoteCacheClient.class);
       }
       combinedCache =
-          spy(new CombinedCache(remoteCacheClient, diskCacheClient, remoteOptions, digestUtil));
+          spy(
+              new CombinedCache(
+                  remoteCacheClient,
+                  diskCacheClient,
+                  /* symlinkTemplate= */ null,
+                  digestUtil,
+                  /* chunkingEnabled= */ false));
 
       var remoteSpawnCache = remoteSpawnCacheWithOptions(remoteOptions);
       for (String requirement :
@@ -508,7 +514,11 @@ public class RemoteSpawnCacheTest {
     combinedCache =
         spy(
             new CombinedCache(
-                remoteCacheClient, /* diskCacheClient= */ null, remoteCacheOptions, digestUtil));
+                remoteCacheClient,
+                /* diskCacheClient= */ null,
+                /* symlinkTemplate= */ null,
+                digestUtil,
+                /* chunkingEnabled= */ false));
     RemoteSpawnCache remoteSpawnCache = remoteSpawnCacheWithOptions(remoteCacheOptions);
     for (String requirement :
         ImmutableList.of(
@@ -552,7 +562,11 @@ public class RemoteSpawnCacheTest {
     combinedCache =
         spy(
             new CombinedCache(
-                remoteCacheClient, diskCacheClient, combinedCacheOptions, digestUtil));
+                remoteCacheClient,
+                diskCacheClient,
+                /* symlinkTemplate= */ null,
+                digestUtil,
+                /* chunkingEnabled= */ false));
 
     for (String requirement :
         ImmutableList.of(ExecutionRequirements.NO_CACHE, ExecutionRequirements.LOCAL)) {

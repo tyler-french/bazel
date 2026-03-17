@@ -45,7 +45,6 @@ import com.google.devtools.build.lib.remote.common.RemotePathResolver;
 import com.google.devtools.build.lib.remote.disk.DiskCacheClient;
 import com.google.devtools.build.lib.remote.merkletree.MerkleTree;
 import com.google.devtools.build.lib.remote.merkletree.MerkleTree.ContentSource;
-import com.google.devtools.build.lib.remote.options.RemoteOptions;
 import com.google.devtools.build.lib.remote.util.DigestUtil;
 import com.google.devtools.build.lib.remote.util.RxUtils.TransferResult;
 import com.google.devtools.build.lib.vfs.Path;
@@ -107,9 +106,15 @@ public class RemoteExecutionCache extends CombinedCache {
   public RemoteExecutionCache(
       RemoteCacheClient remoteCacheClient,
       @Nullable DiskCacheClient diskCacheClient,
-      RemoteOptions options,
-      DigestUtil digestUtil) {
-    super(checkNotNull(remoteCacheClient), diskCacheClient, options, digestUtil);
+      @Nullable String symlinkTemplate,
+      DigestUtil digestUtil,
+      boolean chunkingEnabled) {
+    super(
+        checkNotNull(remoteCacheClient),
+        diskCacheClient,
+        symlinkTemplate,
+        digestUtil,
+        chunkingEnabled);
   }
 
   @VisibleForTesting

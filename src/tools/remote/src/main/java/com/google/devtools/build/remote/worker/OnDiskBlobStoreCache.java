@@ -43,6 +43,7 @@ class OnDiskBlobStoreCache extends CombinedCache {
 
   private record DigestAndInvocation(Digest digest, String invocationId) {}
 
+  private final RemoteOptions remoteOptions;
   private final RemoteWorkerOptions remoteWorkerOptions;
   private final ConcurrentHashMap<DigestAndInvocation, Integer>
       numberOfDownloadsPerDigestAndInvocation = new ConcurrentHashMap<>();
@@ -53,8 +54,10 @@ class OnDiskBlobStoreCache extends CombinedCache {
     super(
         /* remoteCacheClient= */ null,
         new DiskCacheClient(cacheDir, digestUtil, /* verifyDownloads= */ true),
-        remoteOptions,
-        digestUtil);
+        /* symlinkTemplate= */ null,
+        digestUtil,
+        /* chunkingEnabled= */ false);
+    this.remoteOptions = remoteOptions;
     this.remoteWorkerOptions = remoteWorkerOptions;
   }
 
@@ -126,7 +129,7 @@ class OnDiskBlobStoreCache extends CombinedCache {
   }
 
   public RemoteOptions getRemoteOptions() {
-    return options;
+    return remoteOptions;
   }
 
   @Override

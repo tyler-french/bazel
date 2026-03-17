@@ -233,7 +233,7 @@ public class RemoteExecutionServiceTest {
     outErr = new FileOutErr(stdout, stderr);
 
     cache =
-        spy(new InMemoryCombinedCache(spy(new InMemoryCacheClient()), remoteOptions, digestUtil));
+        spy(new InMemoryCombinedCache(spy(new InMemoryCacheClient()), digestUtil));
     doReturn(remoteExecutorCapabilities).when(cache).getRemoteServerCapabilities();
     executor = mock(RemoteExecutionClient.class);
     when(executor.getServerCapabilities()).thenReturn(remoteExecutorCapabilities);

@@ -184,6 +184,10 @@ public class RemoteActionInputFetcherTest extends ActionInputPrefetcherTestBase 
           entry.getValue());
     }
     return new CombinedCache(
-        new InMemoryCacheClient(cacheEntries), /* diskCacheClient= */ null, options, digestUtil);
+        new InMemoryCacheClient(cacheEntries),
+        /* diskCacheClient= */ null,
+        /* symlinkTemplate= */ null,
+        digestUtil,
+        /* chunkingEnabled= */ false);
   }
 }
