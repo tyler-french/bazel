@@ -65,10 +65,11 @@ final class CapabilitiesServer extends CapabilitiesImplBase {
                 .setMaxBatchTotalSizeBytes(CasServer.MAX_BATCH_SIZE_BYTES)
                 .setSplitBlobSupport(true)
                 .setSpliceBlobSupport(true)
-                .setFastCdc2020Params(FastCdc2020Params.newBuilder()
-                    .setAvgChunkSizeBytes(512 * 1024)
-                    .setSeed(0)
-                    .build())
+                .setFastCdc2020Params(
+                    FastCdc2020Params.newBuilder()
+                        .setAvgChunkSizeBytes(512 * 1024)
+                        .setSeed(0)
+                        .build())
                 .build());
     if (execEnabled) {
       response.setExecutionCapabilities(

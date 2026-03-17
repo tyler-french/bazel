@@ -17,6 +17,7 @@ package com.google.devtools.build.lib.remote.chunking;
 import build.bazel.remote.execution.v2.CacheCapabilities;
 import build.bazel.remote.execution.v2.FastCdc2020Params;
 import build.bazel.remote.execution.v2.ServerCapabilities;
+import javax.annotation.Nullable;
 
 /** Configuration for content-defined chunking. All sizes are in bytes. */
 public record ChunkingConfig(int avgChunkSize, int normalizationLevel, int seed) {
@@ -39,12 +40,10 @@ public record ChunkingConfig(int avgChunkSize, int normalizationLevel, int seed)
   }
 
   public static ChunkingConfig defaults() {
-    return new ChunkingConfig(
-        DEFAULT_AVG_CHUNK_SIZE,
-        DEFAULT_NORMALIZATION_LEVEL,
-        DEFAULT_SEED);
+    return new ChunkingConfig(DEFAULT_AVG_CHUNK_SIZE, DEFAULT_NORMALIZATION_LEVEL, DEFAULT_SEED);
   }
 
+  @Nullable
   public static ChunkingConfig fromServerCapabilities(ServerCapabilities capabilities) {
     if (!capabilities.hasCacheCapabilities()) {
       return null;
@@ -57,15 +56,13 @@ public record ChunkingConfig(int avgChunkSize, int normalizationLevel, int seed)
 
     FastCdc2020Params params = cacheCap.getFastCdc2020Params();
     int avgSize = DEFAULT_AVG_CHUNK_SIZE;
-    int seed = DEFAULT_SEED;
-
     long configAvgSize = params.getAvgChunkSizeBytes();
     if (configAvgSize >= 1024
         && configAvgSize <= 1024 * 1024
         && (configAvgSize & (configAvgSize - 1)) == 0) {
       avgSize = (int) configAvgSize;
     }
-    seed = params.getSeed();
+    int seed = params.getSeed();
 
     return new ChunkingConfig(avgSize, DEFAULT_NORMALIZATION_LEVEL, seed);
   }

@@ -531,8 +531,7 @@ public class ByteStreamBuildEventArtifactUploaderTest {
                 CallCredentialsProvider.NO_CREDENTIALS,
                 remoteOptions,
                 retrier,
-                DIGEST_UTIL,
-                /* chunkingConfig= */ null));
+                DIGEST_UTIL));
     doAnswer(
             invocationOnMock ->
                 missingDigestsFinder.findMissingDigests(
@@ -541,7 +540,11 @@ public class ByteStreamBuildEventArtifactUploaderTest {
         .findMissingDigests(any(), any());
 
     return new CombinedCache(
-        cacheClient, /* diskCacheClient= */ null, /* symlinkTemplate= */ null, DIGEST_UTIL);
+        cacheClient,
+        /* diskCacheClient= */ null,
+        /* symlinkTemplate= */ null,
+        DIGEST_UTIL,
+        /* chunkingEnabled= */ false);
   }
 
   private ByteStreamBuildEventArtifactUploader newArtifactUploader(CombinedCache combinedCache) {

@@ -14,6 +14,8 @@
 package com.google.devtools.build.lib.remote;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.common.util.concurrent.Futures.immediateFuture;
+import static com.google.common.util.concurrent.Futures.immediateVoidFuture;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -22,10 +24,9 @@ import static org.mockito.Mockito.when;
 
 import build.bazel.remote.execution.v2.Digest;
 import com.google.common.collect.ImmutableSet;
-import com.google.common.util.concurrent.Futures;
 import com.google.devtools.build.lib.clock.JavaClock;
 import com.google.devtools.build.lib.remote.chunking.ChunkingConfig;
-import com.google.devtools.build.lib.remote.chunking.FastCDCChunker;
+import com.google.devtools.build.lib.remote.chunking.FastCdcChunker;
 import com.google.devtools.build.lib.remote.common.RemoteActionExecutionContext;
 import com.google.devtools.build.lib.remote.util.DigestUtil;
 import com.google.devtools.build.lib.vfs.DigestHashFunction;
@@ -44,24 +45,26 @@ import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 
 /** Tests for {@link ChunkedBlobUploader}. */
 @RunWith(JUnit4.class)
 public class ChunkedBlobUploaderTest {
-  private static final DigestUtil DIGEST_UTIL = new DigestUtil(SyscallCache.NO_CACHE, DigestHashFunction.SHA256);
+  private static final DigestUtil DIGEST_UTIL =
+      new DigestUtil(SyscallCache.NO_CACHE, DigestHashFunction.SHA256);
 
-  @Mock
-  private GrpcCacheClient grpcCacheClient;
-  @Mock
-  private CombinedCache combinedCache;
-  @Mock
-  private RemoteActionExecutionContext context;
+  @Rule public final MockitoRule mockito = MockitoJUnit.rule();
+
+  @Mock private GrpcCacheClient grpcCacheClient;
+  @Mock private CombinedCache combinedCache;
+  @Mock private RemoteActionExecutionContext context;
 
   private FileSystem fs;
   private Path execRoot;
@@ -69,7 +72,6 @@ public class ChunkedBlobUploaderTest {
 
   @Before
   public void setUp() throws Exception {
-    MockitoAnnotations.initMocks(this);
     fs = new InMemoryFileSystem(new JavaClock(), DigestHashFunction.SHA256);
     execRoot = fs.getPath("/execroot");
     execRoot.createDirectoryAndParents();
@@ -98,14 +100,14 @@ public class ChunkedBlobUploaderTest {
 
     ArgumentCaptor<List<Digest>> digestsCaptor = ArgumentCaptor.forClass(List.class);
     when(grpcCacheClient.findMissingDigests(any(), digestsCaptor.capture()))
-        .thenAnswer(invocation -> {
-          List<Digest> digests = invocation.getArgument(1);
-          return Futures.immediateFuture(ImmutableSet.copyOf(digests));
-        });
+        .thenAnswer(
+            invocation -> {
+              List<Digest> digests = invocation.getArgument(1);
+              return immediateFuture(ImmutableSet.copyOf(digests));
+            });
     when(combinedCache.uploadBlob(any(), any(Digest.class), any()))
-        .thenReturn(Futures.immediateFuture(null));
-    when(grpcCacheClient.spliceBlob(any(), any(), any()))
-        .thenReturn(Futures.immediateFuture(null));
+        .thenReturn(immediateVoidFuture());
+    when(grpcCacheClient.spliceBlob(any(), any(), any())).thenReturn(immediateVoidFuture());
 
     uploader.uploadChunked(context, blobDigest, file);
 
@@ -125,9 +127,8 @@ public class ChunkedBlobUploaderTest {
     Digest blobDigest = DIGEST_UTIL.compute(data);
 
     when(grpcCacheClient.findMissingDigests(any(), any()))
-        .thenReturn(Futures.immediateFuture(ImmutableSet.of()));
-    when(grpcCacheClient.spliceBlob(any(), any(), any()))
-        .thenReturn(Futures.immediateFuture(null));
+        .thenReturn(immediateFuture(ImmutableSet.of()));
+    when(grpcCacheClient.spliceBlob(any(), any(), any())).thenReturn(immediateVoidFuture());
 
     uploader.uploadChunked(context, blobDigest, file);
 
@@ -145,7 +146,7 @@ public class ChunkedBlobUploaderTest {
     Digest blobDigest = DIGEST_UTIL.compute(fileData);
 
     ChunkingConfig config = new ChunkingConfig(1024, 2, 0);
-    FastCDCChunker testChunker = new FastCDCChunker(config, DIGEST_UTIL);
+    FastCdcChunker testChunker = new FastCdcChunker(config, DIGEST_UTIL);
     List<Digest> allChunkDigests;
     try (InputStream input = file.getInputStream()) {
       allChunkDigests = testChunker.chunkToDigests(input);
@@ -173,17 +174,17 @@ public class ChunkedBlobUploaderTest {
     }
 
     when(grpcCacheClient.findMissingDigests(any(), any()))
-        .thenReturn(Futures.immediateFuture(ImmutableSet.copyOf(digestsToReportMissing)));
+        .thenReturn(immediateFuture(ImmutableSet.copyOf(digestsToReportMissing)));
     Map<Digest, ByteString> actualUploads = new HashMap<>();
     when(combinedCache.uploadBlob(any(), any(Digest.class), any()))
-        .thenAnswer(invocation -> {
-          Digest d = invocation.getArgument(1);
-          ByteString bs = invocation.getArgument(2);
-          actualUploads.put(d, bs);
-          return Futures.immediateFuture(null);
-        });
-    when(grpcCacheClient.spliceBlob(any(), any(), any()))
-        .thenReturn(Futures.immediateFuture(null));
+        .thenAnswer(
+            invocation -> {
+              Digest d = invocation.getArgument(1);
+              ByteString bs = invocation.getArgument(2);
+              actualUploads.put(d, bs);
+              return immediateVoidFuture();
+            });
+    when(grpcCacheClient.spliceBlob(any(), any(), any())).thenReturn(immediateVoidFuture());
 
     uploader.uploadChunked(context, blobDigest, file);
 

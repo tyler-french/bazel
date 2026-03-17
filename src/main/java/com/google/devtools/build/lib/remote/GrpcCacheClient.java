@@ -54,7 +54,6 @@ import com.google.common.util.concurrent.SettableFuture;
 import com.google.devtools.build.lib.authandtls.CallCredentialsProvider;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.ThreadSafe;
 import com.google.devtools.build.lib.remote.RemoteRetrier.ProgressiveBackoff;
-import com.google.devtools.build.lib.remote.chunking.ChunkingConfig;
 import com.google.devtools.build.lib.remote.common.ActionKey;
 import com.google.devtools.build.lib.remote.common.CacheNotFoundException;
 import com.google.devtools.build.lib.remote.common.MissingDigestsFinder;
@@ -95,7 +94,6 @@ public class GrpcCacheClient implements RemoteCacheClient, MissingDigestsFinder 
   private final RemoteRetrier retrier;
   private final ByteStreamUploader uploader;
   private final int maxMissingBlobsDigestsPerMessage;
-  @Nullable private final ChunkingConfig chunkingConfig;
 
   private final AtomicBoolean closed = new AtomicBoolean();
 
@@ -105,14 +103,12 @@ public class GrpcCacheClient implements RemoteCacheClient, MissingDigestsFinder 
       CallCredentialsProvider callCredentialsProvider,
       RemoteOptions options,
       RemoteRetrier retrier,
-      DigestUtil digestUtil,
-      @Nullable ChunkingConfig chunkingConfig) {
+      DigestUtil digestUtil) {
     this.callCredentialsProvider = callCredentialsProvider;
     this.channel = channel;
     this.options = options;
     this.digestUtil = digestUtil;
     this.retrier = retrier;
-    this.chunkingConfig = chunkingConfig;
     this.uploader =
         new ByteStreamUploader(
             options.remoteInstanceName,
@@ -126,7 +122,6 @@ public class GrpcCacheClient implements RemoteCacheClient, MissingDigestsFinder 
     Preconditions.checkState(
         maxMissingBlobsDigestsPerMessage > 0, "Error: gRPC message size too small.");
   }
-
 
   private int computeMaxMissingBlobsDigestsPerMessage() {
     final int overhead =
@@ -176,17 +171,16 @@ public class GrpcCacheClient implements RemoteCacheClient, MissingDigestsFinder 
   }
 
   /**
-   * Registers a blob as the concatenation of previously uploaded chunks via the SpliceBlob RPC.
-   * All chunks must already be present in the CAS.
+   * Registers a blob as the concatenation of previously uploaded chunks via the SpliceBlob RPC. All
+   * chunks must already be present in the CAS.
    *
    * @return a future that completes when the splice is acknowledged, or null if chunking is not
    *     enabled
    */
   @Override
+  @Nullable
   public ListenableFuture<Void> spliceBlob(
-      RemoteActionExecutionContext context,
-      Digest blobDigest,
-      List<Digest> chunkDigests) {
+      RemoteActionExecutionContext context, Digest blobDigest, List<Digest> chunkDigests) {
     if (!options.experimentalRemoteCacheChunking) {
       return null;
     }
@@ -254,11 +248,6 @@ public class GrpcCacheClient implements RemoteCacheClient, MissingDigestsFinder 
       return;
     }
     channel.release();
-  }
-
-  @Nullable
-  public ChunkingConfig getChunkingConfig() {
-    return chunkingConfig;
   }
 
   /** Returns true if 'options.remoteCache' uses 'grpc' or an empty scheme */

@@ -11,14 +11,13 @@ filegroup(
     name = "srcs",
     testonly = 0,
     srcs = glob(["**"]),
-    visibility = ["//src:__subpackages__"],
 )
 
 java_library(
     name = "ChunkingTests_lib",
     srcs = [
         "ChunkingConfigTest.java",
-        "FastCDCChunkerTest.java",
+        "FastCdcChunkerTest.java",
     ],
     data = [
         # Public domain image by Toriyama Sekien (1712-1788),
@@ -33,20 +32,14 @@ java_library(
         "//third_party:guava",
         "//third_party:junit4",
         "//third_party:truth",
-        "@rules_java//java/runfiles",
         "@remoteapis//:build_bazel_remote_execution_v2_remote_execution_java_proto",
+        "@rules_java//java/runfiles",
     ],
 )
 
 java_test(
     name = "ChunkingTests",
     test_class = "com.google.devtools.build.lib.AllTests",
-    data = [
-        "testdata/SekienAkashita.jpg",
-    ],
-    env = {
-        "SEKIEN_AKASHITA_PATH": "$(rlocationpath testdata/SekienAkashita.jpg)",
-    },
     runtime_deps = [
         ":ChunkingTests_lib",
         "//src/test/java/com/google/devtools/build/lib:test_runner",
@@ -54,8 +47,8 @@ java_test(
 )
 
 java_opt_binary(
-    name = "FastCDCBenchmark",
-    srcs = ["FastCDCBenchmark.java"],
+    name = "FastCdcBenchmark",
+    srcs = ["FastCdcBenchmark.java"],
     main_class = "org.openjdk.jmh.Main",
     deps = [
         "//src/main/java/com/google/devtools/build/lib/remote/chunking",

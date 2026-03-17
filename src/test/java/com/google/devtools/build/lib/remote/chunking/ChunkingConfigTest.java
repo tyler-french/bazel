@@ -76,9 +76,10 @@ public class ChunkingConfigTest {
 
   @Test
   public void fromServerCapabilities_withoutFastCdcParams_returnsNull() {
-    ServerCapabilities capabilities = ServerCapabilities.newBuilder()
-        .setCacheCapabilities(CacheCapabilities.getDefaultInstance())
-        .build();
+    ServerCapabilities capabilities =
+        ServerCapabilities.newBuilder()
+            .setCacheCapabilities(CacheCapabilities.getDefaultInstance())
+            .build();
 
     ChunkingConfig config = ChunkingConfig.fromServerCapabilities(capabilities);
 
@@ -87,14 +88,17 @@ public class ChunkingConfigTest {
 
   @Test
   public void fromServerCapabilities_withFastCdcParams_returnsConfig() {
-    ServerCapabilities capabilities = ServerCapabilities.newBuilder()
-        .setCacheCapabilities(CacheCapabilities.newBuilder()
-            .setFastCdc2020Params(FastCdc2020Params.newBuilder()
-                .setAvgChunkSizeBytes(256 * 1024)
-                .setSeed(42)
-                .build())
-            .build())
-        .build();
+    ServerCapabilities capabilities =
+        ServerCapabilities.newBuilder()
+            .setCacheCapabilities(
+                CacheCapabilities.newBuilder()
+                    .setFastCdc2020Params(
+                        FastCdc2020Params.newBuilder()
+                            .setAvgChunkSizeBytes(256 * 1024)
+                            .setSeed(42)
+                            .build())
+                    .build())
+            .build();
 
     ChunkingConfig config = ChunkingConfig.fromServerCapabilities(capabilities);
 
@@ -106,14 +110,17 @@ public class ChunkingConfigTest {
 
   @Test
   public void fromServerCapabilities_withDefaultFastCdcParams_returnsDefaults() {
-    ServerCapabilities capabilities = ServerCapabilities.newBuilder()
-        .setCacheCapabilities(CacheCapabilities.newBuilder()
-            .setFastCdc2020Params(FastCdc2020Params.newBuilder()
-                .setAvgChunkSizeBytes(512 * 1024)
-                .setSeed(0)
-                .build())
-            .build())
-        .build();
+    ServerCapabilities capabilities =
+        ServerCapabilities.newBuilder()
+            .setCacheCapabilities(
+                CacheCapabilities.newBuilder()
+                    .setFastCdc2020Params(
+                        FastCdc2020Params.newBuilder()
+                            .setAvgChunkSizeBytes(512 * 1024)
+                            .setSeed(0)
+                            .build())
+                    .build())
+            .build();
 
     ChunkingConfig config = ChunkingConfig.fromServerCapabilities(capabilities);
 
@@ -122,13 +129,14 @@ public class ChunkingConfigTest {
 
   @Test
   public void fromServerCapabilities_nonPowerOfTwoAvgSize_fallsBackToDefault() {
-    ServerCapabilities capabilities = ServerCapabilities.newBuilder()
-        .setCacheCapabilities(CacheCapabilities.newBuilder()
-            .setFastCdc2020Params(FastCdc2020Params.newBuilder()
-                .setAvgChunkSizeBytes(300 * 1024)
-                .build())
-            .build())
-        .build();
+    ServerCapabilities capabilities =
+        ServerCapabilities.newBuilder()
+            .setCacheCapabilities(
+                CacheCapabilities.newBuilder()
+                    .setFastCdc2020Params(
+                        FastCdc2020Params.newBuilder().setAvgChunkSizeBytes(300 * 1024).build())
+                    .build())
+            .build();
 
     ChunkingConfig config = ChunkingConfig.fromServerCapabilities(capabilities);
 

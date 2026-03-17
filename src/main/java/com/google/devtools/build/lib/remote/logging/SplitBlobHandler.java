@@ -16,15 +16,14 @@ package com.google.devtools.build.lib.remote.logging;
 
 import build.bazel.remote.execution.v2.SplitBlobRequest;
 import build.bazel.remote.execution.v2.SplitBlobResponse;
-import com.google.devtools.build.lib.remote.logging.RemoteExecutionLog.SplitBlobDetails;
 import com.google.devtools.build.lib.remote.logging.RemoteExecutionLog.RpcCallDetails;
+import com.google.devtools.build.lib.remote.logging.RemoteExecutionLog.SplitBlobDetails;
 
 /**
- * LoggingHandler for {@link
- * build.bazel.remote.execution.v2.ContentAddressableStorage.SplitBlob} gRPC call.
+ * LoggingHandler for {@link build.bazel.remote.execution.v2.ContentAddressableStorage.SplitBlob}
+ * gRPC call.
  */
-public class SplitBlobHandler
-    implements LoggingHandler<SplitBlobRequest, SplitBlobResponse> {
+public class SplitBlobHandler implements LoggingHandler<SplitBlobRequest, SplitBlobResponse> {
 
   private final SplitBlobDetails.Builder builder = SplitBlobDetails.newBuilder();
 

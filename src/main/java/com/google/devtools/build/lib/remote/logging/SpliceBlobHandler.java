@@ -16,12 +16,12 @@ package com.google.devtools.build.lib.remote.logging;
 
 import build.bazel.remote.execution.v2.SpliceBlobRequest;
 import build.bazel.remote.execution.v2.SpliceBlobResponse;
-import com.google.devtools.build.lib.remote.logging.RemoteExecutionLog.SpliceBlobDetails;
 import com.google.devtools.build.lib.remote.logging.RemoteExecutionLog.RpcCallDetails;
+import com.google.devtools.build.lib.remote.logging.RemoteExecutionLog.SpliceBlobDetails;
 
 /**
- * LoggingHandler for {@link
- * build.bazel.remote.execution.v2.ContentAddressableStorage.SpliceBlob} gRPC call.
+ * LoggingHandler for {@link build.bazel.remote.execution.v2.ContentAddressableStorage.SpliceBlob}
+ * gRPC call.
  */
 public class SpliceBlobHandler implements LoggingHandler<SpliceBlobRequest, SpliceBlobResponse> {
 

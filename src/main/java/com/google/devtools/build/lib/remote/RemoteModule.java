@@ -18,7 +18,6 @@ import static java.util.concurrent.TimeUnit.SECONDS;
 
 import build.bazel.remote.execution.v2.Digest;
 import build.bazel.remote.execution.v2.DigestFunction;
-import build.bazel.remote.execution.v2.ServerCapabilities;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.google.auth.Credentials;
 import com.google.common.annotations.VisibleForTesting;
@@ -65,7 +64,6 @@ import com.google.devtools.build.lib.remote.LeaseService.LeaseExtension;
 import com.google.devtools.build.lib.remote.RemoteServerCapabilities.ServerCapabilitiesRequirement;
 import com.google.devtools.build.lib.remote.Retrier.ResultClassifier;
 import com.google.devtools.build.lib.remote.Retrier.ResultClassifier.Result;
-import com.google.devtools.build.lib.remote.chunking.ChunkingConfig;
 import com.google.devtools.build.lib.remote.circuitbreaker.CircuitBreakerFactory;
 import com.google.devtools.build.lib.remote.common.RemoteCacheClient;
 import com.google.devtools.build.lib.remote.common.RemoteExecutionClient;
@@ -296,7 +294,8 @@ public final class RemoteModule extends BlazeModule {
             combinedCacheClient.remoteCacheClient(),
             combinedCacheClient.diskCacheClient(),
             Strings.emptyToNull(remoteOptions.remoteDownloadSymlinkTemplate),
-            digestUtil);
+            digestUtil,
+            remoteOptions.experimentalRemoteCacheChunking);
     actionContextProvider =
         RemoteActionContextProvider.createForRemoteCaching(
             env,
@@ -607,7 +606,10 @@ public final class RemoteModule extends BlazeModule {
               bazelOutputServiceChannel,
               lastBuildId);
     } else {
-      outputService = new RemoteOutputService(env.getDirectories());
+      outputService =
+          new RemoteOutputService(
+              env.getDirectories(),
+              buildRequestOptions != null && buildRequestOptions.rewindLostInputs);
     }
 
     if ((enableHttpCache || enableDiskCache) && !enableGrpcCache) {
@@ -715,31 +717,9 @@ public final class RemoteModule extends BlazeModule {
       }
     }
 
-    ChunkingConfig chunkingConfig = null;
-    if (remoteOptions.experimentalRemoteCacheChunking) {
-      try {
-        ServerCapabilities capabilities = cacheChannel.getServerCapabilities();
-        chunkingConfig = ChunkingConfig.fromServerCapabilities(capabilities);
-      } catch (IOException e) {
-        throw createExitException(
-            "Failed to query remote cache capabilities for chunking: " + e.getMessage(),
-            ExitCode.REMOTE_ERROR,
-            RemoteExecution.Code.CAPABILITIES_QUERY_FAILURE);
-      }
-      if (chunkingConfig == null) {
-        throw createExitException(
-            "--experimental_remote_cache_chunking was set, but the remote cache server does not"
-                + " advertise chunking support (SplitBlob/SpliceBlob RPCs with FastCDC 2020"
-                + " parameters).",
-            ExitCode.REMOTE_ERROR,
-            RemoteExecution.Code.CLIENT_SERVER_INCOMPATIBLE);
-      }
-    }
-
     RemoteCacheClient remoteCacheClient =
         new GrpcCacheClient(
-            cacheChannel.retain(), callCredentialsProvider, remoteOptions, retrier, digestUtil,
-            chunkingConfig);
+            cacheChannel.retain(), callCredentialsProvider, remoteOptions, retrier, digestUtil);
     cacheChannel.release();
     DiskCacheClient diskCacheClient = null;
 
@@ -748,10 +728,7 @@ public final class RemoteModule extends BlazeModule {
         try {
           diskCacheClient =
               CombinedCacheClientFactory.createDiskCache(
-                  env.getWorkingDirectory(),
-                  remoteOptions,
-                  digestUtil,
-                  remoteOptions.remoteVerifyDownloads);
+                  env.getWorkingDirectory(), remoteOptions, digestUtil);
         } catch (Exception e) {
           handleInitFailure(env, e, Code.CACHE_INIT_FAILURE);
           return;
@@ -769,7 +746,8 @@ public final class RemoteModule extends BlazeModule {
               remoteCacheClient,
               diskCacheClient,
               Strings.emptyToNull(remoteOptions.remoteDownloadSymlinkTemplate),
-              digestUtil);
+              digestUtil,
+              remoteOptions.experimentalRemoteCacheChunking);
       actionContextProvider =
           RemoteActionContextProvider.createForRemoteExecution(
               env,
@@ -786,10 +764,7 @@ public final class RemoteModule extends BlazeModule {
         try {
           diskCacheClient =
               CombinedCacheClientFactory.createDiskCache(
-                  env.getWorkingDirectory(),
-                  remoteOptions,
-                  digestUtil,
-                  remoteOptions.remoteVerifyDownloads);
+                  env.getWorkingDirectory(), remoteOptions, digestUtil);
         } catch (Exception e) {
           handleInitFailure(env, e, Code.CACHE_INIT_FAILURE);
           return;
@@ -801,7 +776,8 @@ public final class RemoteModule extends BlazeModule {
               remoteCacheClient,
               diskCacheClient,
               Strings.emptyToNull(remoteOptions.remoteDownloadSymlinkTemplate),
-              digestUtil);
+              digestUtil,
+              remoteOptions.experimentalRemoteCacheChunking);
       actionContextProvider =
           RemoteActionContextProvider.createForRemoteCaching(
               env,
@@ -834,7 +810,8 @@ public final class RemoteModule extends BlazeModule {
           env.getReporter(),
           buildRequestId,
           invocationId,
-          env.getSkyframeExecutor().getEvaluator());
+          env.getSkyframeExecutor().getEvaluator(),
+          remoteOptions.remoteCacheTtl);
     }
 
     buildEventArtifactUploaderFactoryDelegate.init(
@@ -1113,7 +1090,8 @@ public final class RemoteModule extends BlazeModule {
           new RemoteImportantOutputHandler(
               SkyframeExecutorWrappingWalkableGraph.of(env.getSkyframeExecutor()),
               remoteOutputChecker,
-              actionInputFetcher));
+              actionInputFetcher,
+              Preconditions.checkNotNull(outputService).getRewoundActionSynchronizer()));
     }
   }
 

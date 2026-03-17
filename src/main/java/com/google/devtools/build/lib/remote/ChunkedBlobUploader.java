@@ -20,7 +20,7 @@ import build.bazel.remote.execution.v2.Digest;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.io.ByteStreams;
 import com.google.devtools.build.lib.remote.chunking.ChunkingConfig;
-import com.google.devtools.build.lib.remote.chunking.FastCDCChunker;
+import com.google.devtools.build.lib.remote.chunking.FastCdcChunker;
 import com.google.devtools.build.lib.remote.common.RemoteActionExecutionContext;
 import com.google.devtools.build.lib.remote.util.DigestUtil;
 import com.google.devtools.build.lib.vfs.Path;
@@ -34,21 +34,20 @@ import java.util.Set;
 /**
  * Uploads blobs in chunks using Content-Defined Chunking with FastCDC 2020.
  *
- * <p>
- * Upload flow for blobs above threshold:
+ * <p>Upload flow for blobs above threshold:
  *
  * <ol>
- * <li>Chunk file with FastCDC
- * <li>Call findMissingDigests on chunk digests
- * <li>Upload only missing chunks
- * <li>Call SpliceBlob to register the blob as the concatenation of chunks
+ *   <li>Chunk file with FastCDC
+ *   <li>Call findMissingDigests on chunk digests
+ *   <li>Upload only missing chunks
+ *   <li>Call SpliceBlob to register the blob as the concatenation of chunks
  * </ol>
  */
 public class ChunkedBlobUploader {
 
   private final GrpcCacheClient grpcCacheClient;
   private final CombinedCache combinedCache;
-  private final FastCDCChunker chunker;
+  private final FastCdcChunker chunker;
   private final long chunkingThreshold;
 
   /**
@@ -66,7 +65,7 @@ public class ChunkedBlobUploader {
       DigestUtil digestUtil) {
     this.grpcCacheClient = grpcCacheClient;
     this.combinedCache = combinedCache;
-    this.chunker = new FastCDCChunker(config, digestUtil);
+    this.chunker = new FastCdcChunker(config, digestUtil);
     this.chunkingThreshold = config.chunkingThreshold();
   }
 
@@ -90,7 +89,8 @@ public class ChunkedBlobUploader {
       return;
     }
 
-    ImmutableSet<Digest> missingDigests = getFromFuture(grpcCacheClient.findMissingDigests(context, chunkDigests));
+    ImmutableSet<Digest> missingDigests =
+        getFromFuture(grpcCacheClient.findMissingDigests(context, chunkDigests));
     uploadMissingChunks(context, missingDigests, chunkDigests, file);
     getFromFuture(grpcCacheClient.spliceBlob(context, blobDigest, chunkDigests));
   }

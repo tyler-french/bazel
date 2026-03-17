@@ -77,8 +77,8 @@ public class DigestUtil {
   }
 
   /**
-   * Computes a digest for a portion of a byte array. This is useful for uploading
-   * an individual chunk from a larger file.
+   * Computes a digest for a portion of a byte array. This is useful for uploading an individual
+   * chunk from a larger file.
    *
    * @param data the byte array
    * @param offset the start offset in the array

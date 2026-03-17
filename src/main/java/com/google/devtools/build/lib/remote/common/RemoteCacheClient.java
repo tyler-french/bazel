@@ -151,20 +151,18 @@ public interface RemoteCacheClient extends MissingDigestsFinder {
    * Registers a blob as the concatenation of the given chunks via SpliceBlob RPC.
    *
    * <p>This is used for CDC (Content-Defined Chunking) uploads. After uploading all chunks,
-   * SpliceBlob is called to register the blob with the given digest as the concatenation of
-   * the chunks.
+   * SpliceBlob is called to register the blob with the given digest as the concatenation of the
+   * chunks.
    *
    * @param context the context for the action.
    * @param blobDigest The digest of the complete blob.
    * @param chunkDigests The digests of the chunks that make up the blob, in order.
-   * @return A future representing pending completion of the splice operation, or null if
-   *     SpliceBlob is not supported by this cache client.
+   * @return A future representing pending completion of the splice operation, or null if SpliceBlob
+   *     is not supported by this cache client.
    */
   @Nullable
   default ListenableFuture<Void> spliceBlob(
-      RemoteActionExecutionContext context,
-      Digest blobDigest,
-      List<Digest> chunkDigests) {
+      RemoteActionExecutionContext context, Digest blobDigest, List<Digest> chunkDigests) {
     return null;
   }
 

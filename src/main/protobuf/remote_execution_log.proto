@@ -124,7 +124,6 @@ message SplitBlobDetails {
   build.bazel.remote.execution.v2.SplitBlobResponse response = 2;
 }
 
-
 // Details for a call to
 // build.bazel.remote.execution.v2.ContentAddressableStorage.SpliceBlob.
 message SpliceBlobDetails {
@@ -136,7 +135,6 @@ message SpliceBlobDetails {
   // received.
   build.bazel.remote.execution.v2.SpliceBlobResponse response = 2;
 }
-
 
 // Details for a call to google.bytestream.Read.
 message ReadDetails {

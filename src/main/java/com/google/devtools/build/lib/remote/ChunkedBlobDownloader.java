@@ -25,9 +25,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.util.List;
 
-/**
- * Downloads blobs by sequentially fetching chunks via the SplitBlob API.
- */
+/** Downloads blobs by sequentially fetching chunks via the SplitBlob API. */
 public class ChunkedBlobDownloader {
   private final GrpcCacheClient grpcCacheClient;
   private final CombinedCache combinedCache;
@@ -49,8 +47,7 @@ public class ChunkedBlobDownloader {
     downloadAndReassembleChunks(context, chunkDigests, out);
   }
 
-  private List<Digest> getChunkDigests(
-      RemoteActionExecutionContext context, Digest blobDigest)
+  private List<Digest> getChunkDigests(RemoteActionExecutionContext context, Digest blobDigest)
       throws IOException, InterruptedException {
     if (blobDigest.getSizeBytes() == 0) {
       return List.of();

@@ -215,8 +215,7 @@ public class GrpcCacheClientTest {
             });
     channels.add(channel);
     return new GrpcCacheClient(
-        channel, callCredentialsProvider, remoteOptions, retrier, DIGEST_UTIL,
-        /* chunkingConfig= */ null);
+        channel, callCredentialsProvider, remoteOptions, retrier, DIGEST_UTIL);
   }
 
   private static byte[] downloadBlob(
@@ -293,7 +292,8 @@ public class GrpcCacheClientTest {
             newClient(options),
             /* diskCacheClient= */ null,
             /* symlinkTemplate= */ null,
-            DIGEST_UTIL);
+            DIGEST_UTIL,
+            /* chunkingEnabled= */ false);
     PathFragment execPath = PathFragment.create("my/exec/path");
     var virtualActionInput =
         new VirtualActionInput() {
@@ -577,7 +577,11 @@ public class GrpcCacheClientTest {
     GrpcCacheClient client = newClient(remoteOptions);
     CombinedCache combinedCache =
         new CombinedCache(
-            client, /* diskCacheClient= */ null, /* symlinkTemplate= */ null, DIGEST_UTIL);
+            client,
+            /* diskCacheClient= */ null,
+            /* symlinkTemplate= */ null,
+            DIGEST_UTIL,
+            /* chunkingEnabled= */ false);
 
     Digest fooDigest = DIGEST_UTIL.computeAsUtf8("foo-contents");
     Digest barDigest = DIGEST_UTIL.computeAsUtf8("bar-contents");
@@ -603,7 +607,11 @@ public class GrpcCacheClientTest {
     GrpcCacheClient client = newClient(remoteOptions);
     CombinedCache combinedCache =
         new CombinedCache(
-            client, /* diskCacheClient= */ null, /* symlinkTemplate= */ null, DIGEST_UTIL);
+            client,
+            /* diskCacheClient= */ null,
+            /* symlinkTemplate= */ null,
+            DIGEST_UTIL,
+            /* chunkingEnabled= */ false);
 
     final Digest fooDigest =
         fakeFileCache.createScratchInput(ActionInputHelper.fromPath("a/foo"), "xyz");
@@ -673,7 +681,11 @@ public class GrpcCacheClientTest {
     GrpcCacheClient client = newClient(remoteOptions);
     CombinedCache combinedCache =
         new CombinedCache(
-            client, /* diskCacheClient= */ null, /* symlinkTemplate= */ null, DIGEST_UTIL);
+            client,
+            /* diskCacheClient= */ null,
+            /* symlinkTemplate= */ null,
+            DIGEST_UTIL,
+            /* chunkingEnabled= */ false);
 
     final Digest barDigest =
         fakeFileCache.createScratchInputDirectory(
@@ -718,7 +730,11 @@ public class GrpcCacheClientTest {
     GrpcCacheClient client = newClient(remoteOptions);
     CombinedCache combinedCache =
         new CombinedCache(
-            client, /* diskCacheClient= */ null, /* symlinkTemplate= */ null, DIGEST_UTIL);
+            client,
+            /* diskCacheClient= */ null,
+            /* symlinkTemplate= */ null,
+            DIGEST_UTIL,
+            /* chunkingEnabled= */ false);
 
     final Digest wobbleDigest =
         fakeFileCache.createScratchInput(ActionInputHelper.fromPath("bar/test/wobble"), "xyz");
@@ -883,7 +899,11 @@ public class GrpcCacheClientTest {
     GrpcCacheClient client = newClient(remoteOptions);
     CombinedCache combinedCache =
         new CombinedCache(
-            client, /* diskCacheClient= */ null, /* symlinkTemplate= */ null, DIGEST_UTIL);
+            client,
+            /* diskCacheClient= */ null,
+            /* symlinkTemplate= */ null,
+            DIGEST_UTIL,
+            /* chunkingEnabled= */ false);
     var unused =
         combinedCache.downloadActionResult(
             context,
@@ -898,7 +918,11 @@ public class GrpcCacheClientTest {
     GrpcCacheClient client = newClient(remoteOptions);
     CombinedCache combinedCache =
         new CombinedCache(
-            client, /* diskCacheClient= */ null, /* symlinkTemplate= */ null, DIGEST_UTIL);
+            client,
+            /* diskCacheClient= */ null,
+            /* symlinkTemplate= */ null,
+            DIGEST_UTIL,
+            /* chunkingEnabled= */ false);
 
     final Digest fooDigest =
         fakeFileCache.createScratchInput(ActionInputHelper.fromPath("a/foo"), "xyz");
@@ -976,7 +1000,11 @@ public class GrpcCacheClientTest {
     GrpcCacheClient client = newClient(remoteOptions);
     CombinedCache combinedCache =
         new CombinedCache(
-            client, /* diskCacheClient= */ null, /* symlinkTemplate= */ null, DIGEST_UTIL);
+            client,
+            /* diskCacheClient= */ null,
+            /* symlinkTemplate= */ null,
+            DIGEST_UTIL,
+            /* chunkingEnabled= */ false);
 
     final Digest fooDigest =
         fakeFileCache.createScratchInput(ActionInputHelper.fromPath("a/foo"), "xyz");
@@ -1043,7 +1071,11 @@ public class GrpcCacheClientTest {
     GrpcCacheClient client = newClient(remoteOptions);
     CombinedCache combinedCache =
         new CombinedCache(
-            client, /* diskCacheClient= */ null, /* symlinkTemplate= */ null, DIGEST_UTIL);
+            client,
+            /* diskCacheClient= */ null,
+            /* symlinkTemplate= */ null,
+            DIGEST_UTIL,
+            /* chunkingEnabled= */ false);
 
     final Digest fooDigest =
         fakeFileCache.createScratchInput(ActionInputHelper.fromPath("a/foo"), "xyz");

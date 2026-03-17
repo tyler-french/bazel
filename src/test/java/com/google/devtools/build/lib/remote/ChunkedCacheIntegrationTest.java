@@ -164,8 +164,7 @@ public class ChunkedCacheIntegrationTest extends BuildIntegrationTestCase {
       ByteStreamGrpc.ByteStreamBlockingStub bsStub = ByteStreamGrpc.newBlockingStub(channel);
       ByteArrayOutputStream reassembled = new ByteArrayOutputStream();
       for (Digest chunkDigest : chunkDigests) {
-        String resourceName =
-            "blobs/" + chunkDigest.getHash() + "/" + chunkDigest.getSizeBytes();
+        String resourceName = "blobs/" + chunkDigest.getHash() + "/" + chunkDigest.getSizeBytes();
         Iterator<ReadResponse> readIter =
             bsStub.read(ReadRequest.newBuilder().setResourceName(resourceName).build());
         int chunkBytesRead = 0;

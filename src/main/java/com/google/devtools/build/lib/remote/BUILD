@@ -7,7 +7,7 @@ package(
 
 filegroup(
     name = "srcs",
-    srcs = glob(["*"]) + [
+    srcs = glob(["**"]) + [
         "//src/main/java/com/google/devtools/build/lib/remote/chunking:srcs",
         "//src/main/java/com/google/devtools/build/lib/remote/circuitbreaker:srcs",
         "//src/main/java/com/google/devtools/build/lib/remote/common:srcs",

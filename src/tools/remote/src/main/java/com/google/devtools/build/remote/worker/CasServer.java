@@ -35,11 +35,11 @@ import build.bazel.remote.execution.v2.SplitBlobResponse;
 import com.google.common.flogger.GoogleLogger;
 import com.google.devtools.build.lib.remote.common.CacheNotFoundException;
 import com.google.devtools.build.lib.remote.common.RemoteActionExecutionContext;
+import com.google.devtools.build.lib.remote.util.DigestOutputStream;
 import com.google.devtools.build.lib.remote.util.TracingMetadataUtils;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.rpc.Code;
 import io.grpc.stub.StreamObserver;
-import com.google.devtools.build.lib.remote.util.DigestOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.util.ArrayDeque;
@@ -159,8 +159,8 @@ final class CasServer extends ContentAddressableStorageImplBase {
   }
 
   /**
-   * Returns the chunk digests for a blob that was previously stored via spliceBlob.
-   * Clients use this to download large blobs in smaller pieces.
+   * Returns the chunk digests for a blob that was previously stored via spliceBlob. Clients use
+   * this to download large blobs in smaller pieces.
    */
   @Override
   public void splitBlob(
@@ -183,8 +183,8 @@ final class CasServer extends ContentAddressableStorageImplBase {
   /**
    * Stores a mapping from a blob digest to the list of chunk digests that compose it.
    *
-   * <p>All chunks must already exist in the CAS. The concatenated chunks are verified
-   * to match the expected blob digest before storing the mapping.
+   * <p>All chunks must already exist in the CAS. The concatenated chunks are verified to match the
+   * expected blob digest before storing the mapping.
    */
   @Override
   public void spliceBlob(
@@ -212,7 +212,8 @@ final class CasServer extends ContentAddressableStorageImplBase {
       }
       Digest computedDigest = digestOut.digest();
       if (!computedDigest.equals(blobDigest)) {
-        String err = "Splice digest " + blobDigest + " did not match computed digest: " + computedDigest;
+        String err =
+            "Splice digest " + blobDigest + " did not match computed digest: " + computedDigest;
         responseObserver.onError(StatusUtils.invalidArgumentError("blob_digest", err));
         return;
       }
@@ -220,8 +221,7 @@ final class CasServer extends ContentAddressableStorageImplBase {
       // Record the blob-to-chunks mapping for splitBlob lookups.
       splicedBlobs.put(blobDigest, new ArrayList<>(chunkDigests));
 
-      responseObserver.onNext(
-          SpliceBlobResponse.newBuilder().setBlobDigest(blobDigest).build());
+      responseObserver.onNext(SpliceBlobResponse.newBuilder().setBlobDigest(blobDigest).build());
       responseObserver.onCompleted();
     } catch (CacheNotFoundException e) {
       responseObserver.onError(StatusUtils.notFoundError(e.getMissingDigest()));

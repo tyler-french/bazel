@@ -7,7 +7,7 @@ package(
 
 filegroup(
     name = "srcs",
-    srcs = glob(["*"]),
+    srcs = glob(["**"]),
     visibility = ["//src:__subpackages__"],
 )
 
@@ -15,12 +15,12 @@ java_library(
     name = "chunking",
     srcs = [
         "ChunkingConfig.java",
-        "FastCDCChunker.java"
+        "FastCdcChunker.java",
     ],
     deps = [
-        "//src/main/java/com/google/devtools/build/lib/remote/options",
         "//src/main/java/com/google/devtools/build/lib/remote/util:digest_utils",
         "//third_party:guava",
+        "//third_party:jsr305",
         "@remoteapis//:build_bazel_remote_execution_v2_remote_execution_java_proto",
     ],
 )

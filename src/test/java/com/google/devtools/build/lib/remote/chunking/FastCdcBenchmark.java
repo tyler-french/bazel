@@ -36,14 +36,14 @@ import org.openjdk.jmh.annotations.Warmup;
 @Warmup(iterations = 3, time = 5, timeUnit = TimeUnit.SECONDS)
 @Measurement(iterations = 3, time = 5, timeUnit = TimeUnit.SECONDS)
 @Fork(3)
-public class FastCDCBenchmark {
+public class FastCdcBenchmark {
   private static final int AVG_CHUNK_SIZE = 512 * 1024;
 
   @Param({"1048576", "8388608", "67108864"})
   public int size;
 
   private byte[] data;
-  private FastCDCChunker chunker;
+  private FastCdcChunker chunker;
 
   @Setup(Level.Iteration)
   public void setup() {
@@ -51,11 +51,10 @@ public class FastCDCBenchmark {
     data = new byte[size];
     new SecureRandom().nextBytes(data);
 
-    DigestUtil digestUtil =
-        new DigestUtil(SyscallCache.NO_CACHE, BazelHashFunctions.BLAKE3);
+    DigestUtil digestUtil = new DigestUtil(SyscallCache.NO_CACHE, BazelHashFunctions.BLAKE3);
     int minSize = AVG_CHUNK_SIZE / 4;
     int maxSize = AVG_CHUNK_SIZE * 4;
-    chunker = new FastCDCChunker(minSize, AVG_CHUNK_SIZE, maxSize, 2, 0, digestUtil);
+    chunker = new FastCdcChunker(minSize, AVG_CHUNK_SIZE, maxSize, 2, 0, digestUtil);
   }
 
   @Benchmark

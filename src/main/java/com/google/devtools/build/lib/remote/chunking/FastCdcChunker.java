@@ -26,12 +26,10 @@ import java.util.List;
 /**
  * FastCDC 2020 implementation for splitting large blobs.
  *
- * <p>
- * This module implements the canonical FastCDC algorithm as described in the
- * [paper](https://ieeexplore.ieee.org/document/9055082) by Wen Xia, et al., in
- * 2020.
+ * <p>This module implements the canonical FastCDC algorithm as described in the
+ * [paper](https://ieeexplore.ieee.org/document/9055082) by Wen Xia, et al., in 2020.
  */
-public final class FastCDCChunker {
+public final class FastCdcChunker {
 
   // Masks for each of the desired number of bits, where 0 through 5 are unused.
   // The values for sizes 64 bytes through 128 kilo-bytes come from the C
@@ -41,11 +39,11 @@ public final class FastCDCChunker {
   // relatively evenly, hence these seemingly "magic" values.
   // @formatter:off
   private static final long[] MASKS = {
-    0,                  // 0: padding
-    0,                  // 1: padding
-    0,                  // 2: padding
-    0,                  // 3: padding
-    0,                  // 4: padding
+    0, // 0: padding
+    0, // 1: padding
+    0, // 2: padding
+    0, // 3: padding
+    0, // 4: padding
     0x0000000001804110L, // 5: unused except for NC 3
     0x0000000001803110L, // 6: 64B
     0x0000000018035100L, // 7: 128B
@@ -161,18 +159,22 @@ public final class FastCDCChunker {
   private final long shiftedSeed;
   private final DigestUtil digestUtil;
 
-  public FastCDCChunker(DigestUtil digestUtil) {
+  public FastCdcChunker(DigestUtil digestUtil) {
     this(ChunkingConfig.defaults(), digestUtil);
   }
 
-  public FastCDCChunker(ChunkingConfig config, DigestUtil digestUtil) {
-    this(config.minChunkSize(), config.avgChunkSize(), config.maxChunkSize(),
-        config.normalizationLevel(), Integer.toUnsignedLong(config.seed()), digestUtil);
+  public FastCdcChunker(ChunkingConfig config, DigestUtil digestUtil) {
+    this(
+        config.minChunkSize(),
+        config.avgChunkSize(),
+        config.maxChunkSize(),
+        config.normalizationLevel(),
+        Integer.toUnsignedLong(config.seed()),
+        digestUtil);
   }
 
-  public FastCDCChunker(
-      int minSize, int avgSize, int maxSize, int normalization, long seed,
-      DigestUtil digestUtil) {
+  public FastCdcChunker(
+      int minSize, int avgSize, int maxSize, int normalization, long seed, DigestUtil digestUtil) {
     checkArgument(minSize > 0, "minSize must be positive");
     checkArgument(avgSize >= minSize, "avgSize must be >= minSize");
     checkArgument(maxSize >= avgSize, "maxSize must be >= avgSize");
@@ -198,9 +200,7 @@ public final class FastCDCChunker {
     this.shiftedSeed = seed << 1;
   }
 
-  /**
-   * Finds the next chunk boundary.
-   */
+  /** Finds the next chunk boundary. */
   private int cut(byte[] buf, int off, int len) {
     if (len <= minSize) {
       return len;
@@ -249,13 +249,11 @@ public final class FastCDCChunker {
   /**
    * Chunks a file and returns chunk digests.
    *
-   * <p>
-   * This method is used for building MerkleTree entries for large files. It
-   * returns the content digests in order for each chunk.
+   * <p>This method is used for building MerkleTree entries for large files. It returns the content
+   * digests in order for each chunk.
    *
-   * <p>
-   * Note: We don't need the raw data here. We can read from the original file
-   * (seekable) when uploading, similar to how whole blobs work.
+   * <p>Note: We don't need the raw data here. We can read from the original file (seekable) when
+   * uploading, similar to how whole blobs work.
    */
   public List<Digest> chunkToDigests(InputStream input) throws IOException {
     List<Digest> digests = new ArrayList<>();
