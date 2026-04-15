@@ -49,6 +49,7 @@ public class ChunkedBlobUploader {
   private final CombinedCache combinedCache;
   private final FastCdcChunker chunker;
   private final long chunkingThreshold;
+  private final int concurrency;
 
   /**
    * Creates a new uploader with the given chunking configuration.
@@ -57,16 +58,19 @@ public class ChunkedBlobUploader {
    * @param combinedCache cache used to upload individual chunks
    * @param config chunking parameters negotiated from server capabilities
    * @param digestUtil utility for computing chunk digests
+   * @param concurrency maximum number of chunk uploads to run in parallel
    */
   public ChunkedBlobUploader(
       GrpcCacheClient grpcCacheClient,
       CombinedCache combinedCache,
       ChunkingConfig config,
-      DigestUtil digestUtil) {
+      DigestUtil digestUtil,
+      int concurrency) {
     this.grpcCacheClient = grpcCacheClient;
     this.combinedCache = combinedCache;
     this.chunker = new FastCdcChunker(config, digestUtil);
     this.chunkingThreshold = config.chunkingThreshold();
+    this.concurrency = concurrency;
   }
 
   /** Returns the minimum blob size for chunked upload. */
@@ -104,17 +108,23 @@ public class ChunkedBlobUploader {
     if (missingDigests.isEmpty()) {
       return;
     }
-
     Set<Digest> uploaded = new HashSet<>();
-    try (InputStream input = file.getInputStream()) {
+    try (FutureWindow<Void> window = new FutureWindow<>(concurrency);
+        InputStream input = file.getInputStream()) {
       for (Digest chunkDigest : chunkDigests) {
-        if (missingDigests.contains(chunkDigest) && uploaded.add(chunkDigest)) {
-          ByteString.Output out = ByteString.newOutput((int) chunkDigest.getSizeBytes());
-          ByteStreams.limit(input, chunkDigest.getSizeBytes()).transferTo(out);
-          getFromFuture(combinedCache.uploadBlob(context, chunkDigest, out.toByteString()));
-        } else {
+        if (!missingDigests.contains(chunkDigest) || !uploaded.add(chunkDigest)) {
           input.skipNBytes(chunkDigest.getSizeBytes());
+          continue;
         }
+        if (window.isFull()) {
+          window.take();
+        }
+        ByteString.Output out = ByteString.newOutput((int) chunkDigest.getSizeBytes());
+        ByteStreams.limit(input, chunkDigest.getSizeBytes()).transferTo(out);
+        window.add(combinedCache.uploadBlob(context, chunkDigest, out.toByteString()));
+      }
+      while (!window.isEmpty()) {
+        window.take();
       }
     }
   }

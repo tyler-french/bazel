@@ -620,6 +620,7 @@ java_library(
         "ChunkedBlobDownloader.java",
         "ChunkedBlobUploader.java",
         "CombinedCache.java",
+        "FutureWindow.java",
     ],
     deps = [
         ":grpc_cache_client",

@@ -31,7 +31,6 @@ import com.google.devtools.build.lib.vfs.DigestHashFunction;
 import com.google.devtools.build.lib.vfs.SyscallCache;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.OutputStream;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -58,7 +57,8 @@ public class ChunkedBlobDownloaderTest {
   @Before
   public void setUp() {
     when(grpcCacheClient.shouldVerifyDownloads()).thenReturn(true);
-    downloader = new ChunkedBlobDownloader(grpcCacheClient, combinedCache, DIGEST_UTIL);
+    downloader =
+        new ChunkedBlobDownloader(grpcCacheClient, combinedCache, DIGEST_UTIL, /* concurrency= */ 8);
   }
 
   @Test
@@ -81,13 +81,8 @@ public class ChunkedBlobDownloaderTest {
         SplitBlobResponse.newBuilder().addChunkDigests(chunkDigest).build();
     when(grpcCacheClient.splitBlob(any(), eq(blobDigest)))
         .thenReturn(Futures.immediateFuture(splitResponse));
-    when(combinedCache.downloadBlob(any(), eq(chunkDigest), any()))
-        .thenAnswer(
-            invocation -> {
-              OutputStream out = invocation.getArgument(2);
-              out.write(chunkData);
-              return Futures.immediateFuture(null);
-            });
+    when(combinedCache.downloadBlob(any(), eq(chunkDigest)))
+        .thenReturn(Futures.immediateFuture(chunkData));
 
     ByteArrayOutputStream out = new ByteArrayOutputStream();
     downloader.downloadChunked(context, blobDigest, out);
@@ -113,35 +108,20 @@ public class ChunkedBlobDownloaderTest {
             .build();
     when(grpcCacheClient.splitBlob(any(), eq(blobDigest)))
         .thenReturn(Futures.immediateFuture(splitResponse));
-    when(combinedCache.downloadBlob(any(), eq(chunk1Digest), any()))
-        .thenAnswer(
-            invocation -> {
-              OutputStream out = invocation.getArgument(2);
-              out.write(chunk1Data);
-              return Futures.immediateFuture(null);
-            });
-    when(combinedCache.downloadBlob(any(), eq(chunk2Digest), any()))
-        .thenAnswer(
-            invocation -> {
-              OutputStream out = invocation.getArgument(2);
-              out.write(chunk2Data);
-              return Futures.immediateFuture(null);
-            });
-    when(combinedCache.downloadBlob(any(), eq(chunk3Digest), any()))
-        .thenAnswer(
-            invocation -> {
-              OutputStream out = invocation.getArgument(2);
-              out.write(chunk3Data);
-              return Futures.immediateFuture(null);
-            });
+    when(combinedCache.downloadBlob(any(), eq(chunk1Digest)))
+        .thenReturn(Futures.immediateFuture(chunk1Data));
+    when(combinedCache.downloadBlob(any(), eq(chunk2Digest)))
+        .thenReturn(Futures.immediateFuture(chunk2Data));
+    when(combinedCache.downloadBlob(any(), eq(chunk3Digest)))
+        .thenReturn(Futures.immediateFuture(chunk3Data));
 
     ByteArrayOutputStream out = new ByteArrayOutputStream();
     downloader.downloadChunked(context, blobDigest, out);
 
     assertThat(out.toByteArray()).isEqualTo(new byte[] {1, 2, 3, 4, 5, 6, 7, 8, 9});
-    verify(combinedCache).downloadBlob(any(), eq(chunk1Digest), any());
-    verify(combinedCache).downloadBlob(any(), eq(chunk2Digest), any());
-    verify(combinedCache).downloadBlob(any(), eq(chunk3Digest), any());
+    verify(combinedCache).downloadBlob(any(), eq(chunk1Digest));
+    verify(combinedCache).downloadBlob(any(), eq(chunk2Digest));
+    verify(combinedCache).downloadBlob(any(), eq(chunk3Digest));
   }
 
   @Test
@@ -159,7 +139,7 @@ public class ChunkedBlobDownloaderTest {
   }
 
   @Test
-  public void downloadChunked_chunkFailsAfterPartialWrite_throwsIOException() throws Exception {
+  public void downloadChunked_chunkFails_throwsIOException() throws Exception {
     byte[] chunk1Data = new byte[] {1, 2, 3};
     byte[] chunk2Data = new byte[] {4, 5, 6};
     Digest chunk1Digest = DIGEST_UTIL.compute(chunk1Data);
@@ -173,14 +153,9 @@ public class ChunkedBlobDownloaderTest {
             .build();
     when(grpcCacheClient.splitBlob(any(), eq(blobDigest)))
         .thenReturn(Futures.immediateFuture(splitResponse));
-    when(combinedCache.downloadBlob(any(), eq(chunk1Digest), any()))
-        .thenAnswer(
-            invocation -> {
-              OutputStream out = invocation.getArgument(2);
-              out.write(chunk1Data);
-              return Futures.immediateFuture(null);
-            });
-    when(combinedCache.downloadBlob(any(), eq(chunk2Digest), any()))
+    when(combinedCache.downloadBlob(any(), eq(chunk1Digest)))
+        .thenReturn(Futures.immediateFuture(chunk1Data));
+    when(combinedCache.downloadBlob(any(), eq(chunk2Digest)))
         .thenReturn(Futures.immediateFailedFuture(new IOException("connection reset")));
 
     ByteArrayOutputStream out = new ByteArrayOutputStream();
@@ -197,13 +172,8 @@ public class ChunkedBlobDownloaderTest {
         SplitBlobResponse.newBuilder().addChunkDigests(chunkDigest).build();
     when(grpcCacheClient.splitBlob(any(), eq(blobDigest)))
         .thenReturn(Futures.immediateFuture(splitResponse));
-    when(combinedCache.downloadBlob(any(), eq(chunkDigest), any()))
-        .thenAnswer(
-            invocation -> {
-              OutputStream out = invocation.getArgument(2);
-              out.write(chunkData);
-              return Futures.immediateFuture(null);
-            });
+    when(combinedCache.downloadBlob(any(), eq(chunkDigest)))
+        .thenReturn(Futures.immediateFuture(chunkData));
 
     OutputDigestMismatchException e =
         assertThrows(
@@ -225,13 +195,8 @@ public class ChunkedBlobDownloaderTest {
         SplitBlobResponse.newBuilder().addChunkDigests(chunkDigest).build();
     when(grpcCacheClient.splitBlob(any(), eq(blobDigest)))
         .thenReturn(Futures.immediateFuture(splitResponse));
-    when(combinedCache.downloadBlob(any(), eq(chunkDigest), any()))
-        .thenAnswer(
-            invocation -> {
-              OutputStream out = invocation.getArgument(2);
-              out.write(chunkData);
-              return Futures.immediateFuture(null);
-            });
+    when(combinedCache.downloadBlob(any(), eq(chunkDigest)))
+        .thenReturn(Futures.immediateFuture(chunkData));
 
     ByteArrayOutputStream out = new ByteArrayOutputStream();
     downloader.downloadChunked(context, blobDigest, out);

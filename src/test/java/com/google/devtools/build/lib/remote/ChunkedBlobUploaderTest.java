@@ -77,14 +77,17 @@ public class ChunkedBlobUploaderTest {
     execRoot.createDirectoryAndParents();
 
     ChunkingConfig config = new ChunkingConfig(1024, 2, 0);
-    uploader = new ChunkedBlobUploader(grpcCacheClient, combinedCache, config, DIGEST_UTIL);
+    uploader =
+        new ChunkedBlobUploader(
+            grpcCacheClient, combinedCache, config, DIGEST_UTIL, /* concurrency= */ 8);
   }
 
   @Test
   public void getChunkingThreshold_returnsConfiguredValue() {
     ChunkingConfig config = new ChunkingConfig(512, 2, 0);
     ChunkedBlobUploader uploader =
-        new ChunkedBlobUploader(grpcCacheClient, combinedCache, config, DIGEST_UTIL);
+        new ChunkedBlobUploader(
+            grpcCacheClient, combinedCache, config, DIGEST_UTIL, /* concurrency= */ 8);
 
     assertThat(uploader.getChunkingThreshold()).isEqualTo(512 * 4);
   }

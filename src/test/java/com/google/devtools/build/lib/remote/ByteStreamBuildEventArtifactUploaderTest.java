@@ -544,7 +544,8 @@ public class ByteStreamBuildEventArtifactUploaderTest {
         /* diskCacheClient= */ null,
         /* symlinkTemplate= */ null,
         DIGEST_UTIL,
-        /* chunkingEnabled= */ false);
+        /* chunkingEnabled= */ false,
+        /* chunkConcurrency= */ 8);
   }
 
   private ByteStreamBuildEventArtifactUploader newArtifactUploader(CombinedCache combinedCache) {

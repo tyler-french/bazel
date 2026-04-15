@@ -30,17 +30,22 @@ import java.io.OutputStream;
 import java.util.List;
 import javax.annotation.Nullable;
 
-/** Downloads blobs by sequentially fetching chunks via the SplitBlob API. */
+/** Downloads blobs by fetching chunks in parallel via the SplitBlob API. */
 public class ChunkedBlobDownloader {
   private final GrpcCacheClient grpcCacheClient;
   private final CombinedCache combinedCache;
   private final DigestUtil digestUtil;
+  private final int concurrency;
 
   public ChunkedBlobDownloader(
-      GrpcCacheClient grpcCacheClient, CombinedCache combinedCache, DigestUtil digestUtil) {
+      GrpcCacheClient grpcCacheClient,
+      CombinedCache combinedCache,
+      DigestUtil digestUtil,
+      int concurrency) {
     this.grpcCacheClient = grpcCacheClient;
     this.combinedCache = combinedCache;
     this.digestUtil = digestUtil;
+    this.concurrency = concurrency;
   }
 
   /**
@@ -84,8 +89,16 @@ public class ChunkedBlobDownloader {
   private void downloadAndReassembleChunks(
       RemoteActionExecutionContext context, List<Digest> chunkDigests, OutputStream out)
       throws IOException, InterruptedException {
-    for (Digest chunkDigest : chunkDigests) {
-      getFromFuture(combinedCache.downloadBlob(context, chunkDigest, out));
+    try (FutureWindow<byte[]> window = new FutureWindow<>(concurrency)) {
+      for (Digest chunkDigest : chunkDigests) {
+        if (window.isFull()) {
+          out.write(window.take());
+        }
+        window.add(combinedCache.downloadBlob(context, chunkDigest));
+      }
+      while (!window.isEmpty()) {
+        out.write(window.take());
+      }
     }
   }
 }

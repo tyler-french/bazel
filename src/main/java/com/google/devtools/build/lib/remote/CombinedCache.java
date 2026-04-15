@@ -108,6 +108,7 @@ public class CombinedCache extends AbstractReferenceCounted {
   @Nullable protected final String symlinkTemplate;
   protected final DigestUtil digestUtil;
   private final boolean chunkingEnabled;
+  private final int chunkConcurrency;
 
   // Delays the initialization of the chunking support logic until first use to avoid blocking on
   // a server capabilities check at construction time.
@@ -128,8 +129,12 @@ public class CombinedCache extends AbstractReferenceCounted {
         synchronized (this) {
           config = ChunkingConfig.fromServerCapabilities(getRemoteServerCapabilities());
           if (config != null) {
-            downloader = new ChunkedBlobDownloader(grpcClient, CombinedCache.this, digestUtil);
-            uploader = new ChunkedBlobUploader(grpcClient, CombinedCache.this, config, digestUtil);
+            downloader =
+                new ChunkedBlobDownloader(
+                    grpcClient, CombinedCache.this, digestUtil, chunkConcurrency);
+            uploader =
+                new ChunkedBlobUploader(
+                    grpcClient, CombinedCache.this, config, digestUtil, chunkConcurrency);
           }
           initialized = true;
         }
@@ -157,15 +162,18 @@ public class CombinedCache extends AbstractReferenceCounted {
       @Nullable DiskCacheClient diskCacheClient,
       @Nullable String symlinkTemplate,
       DigestUtil digestUtil,
-      boolean chunkingEnabled) {
+      boolean chunkingEnabled,
+      int chunkConcurrency) {
     checkArgument(
         remoteCacheClient != null || diskCacheClient != null,
         "remoteCacheClient and diskCacheClient cannot be null at the same time");
+    checkArgument(chunkConcurrency >= 1, "chunkConcurrency must be >= 1");
     this.remoteCacheClient = remoteCacheClient;
     this.diskCacheClient = diskCacheClient;
     this.symlinkTemplate = symlinkTemplate;
     this.digestUtil = digestUtil;
     this.chunkingEnabled = chunkingEnabled;
+    this.chunkConcurrency = chunkConcurrency;
   }
 
   public CacheCapabilities getRemoteCacheCapabilities() throws IOException {

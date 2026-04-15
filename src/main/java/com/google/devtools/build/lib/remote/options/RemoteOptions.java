@@ -846,6 +846,17 @@ public abstract class RemoteOptions extends CommonRemoteOptions {
   public abstract boolean getExperimentalRemoteCacheChunking();
 
   @Option(
+      name = "experimental_chunk_transfer_concurrency",
+      defaultValue = "8",
+      documentationCategory = OptionDocumentationCategory.REMOTE,
+      metadataTags = OptionMetadataTag.EXPERIMENTAL,
+      effectTags = {OptionEffectTag.UNKNOWN},
+      help =
+          "Maximum number of chunk uploads or downloads to run in parallel for a single blob when"
+              + " --experimental_remote_cache_chunking is enabled. Must be >= 1.")
+  public abstract int getExperimentalChunkTransferConcurrency();
+
+  @Option(
       name = "experimental_throttle_remote_action_building",
       defaultValue = "true",
       converter = BooleanConverter.class,
