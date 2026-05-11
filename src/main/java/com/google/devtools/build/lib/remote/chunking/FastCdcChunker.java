@@ -29,7 +29,7 @@ import java.util.List;
  * <p>This module implements the canonical FastCDC algorithm as described in the
  * [paper](https://ieeexplore.ieee.org/document/9055082) by Wen Xia, et al., in 2020.
  */
-public final class FastCdcChunker {
+public final class FastCdcChunker implements ContentDefinedChunker {
 
   // Masks for each of the desired number of bits, where 0 through 5 are unused.
   // The values for sizes 64 bytes through 128 kilo-bytes come from the C
@@ -160,10 +160,10 @@ public final class FastCdcChunker {
   private final DigestUtil digestUtil;
 
   public FastCdcChunker(DigestUtil digestUtil) {
-    this(ChunkingConfig.defaults(), digestUtil);
+    this(ChunkingConfig.fastCdcDefaults(), digestUtil);
   }
 
-  public FastCdcChunker(ChunkingConfig config, DigestUtil digestUtil) {
+  public FastCdcChunker(ChunkingConfig.FastCdc config, DigestUtil digestUtil) {
     this(
         config.minChunkSize(),
         config.avgChunkSize(),
@@ -255,6 +255,7 @@ public final class FastCdcChunker {
    * <p>Note: We don't need the raw data here. We can read from the original file (seekable) when
    * uploading, similar to how whole blobs work.
    */
+  @Override
   public List<Digest> chunkToDigests(InputStream input) throws IOException {
     List<Digest> digests = new ArrayList<>();
 

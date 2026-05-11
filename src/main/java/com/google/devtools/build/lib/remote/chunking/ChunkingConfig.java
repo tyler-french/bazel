@@ -15,32 +15,33 @@
 package com.google.devtools.build.lib.remote.chunking;
 
 import build.bazel.remote.execution.v2.CacheCapabilities;
+import build.bazel.remote.execution.v2.ChunkingFunction;
 import build.bazel.remote.execution.v2.FastCdc2020Params;
+import build.bazel.remote.execution.v2.RepMaxCdcParams;
 import build.bazel.remote.execution.v2.ServerCapabilities;
+import com.google.devtools.build.lib.remote.util.DigestUtil;
 import javax.annotation.Nullable;
 
-/** Configuration for content-defined chunking. All sizes are in bytes. */
-public record ChunkingConfig(int avgChunkSize, int normalizationLevel, int seed) {
+/** Selected content-defined chunking configuration. All sizes are in bytes. */
+public interface ChunkingConfig {
+  int DEFAULT_FAST_CDC_AVG_CHUNK_SIZE = 512 * 1024;
+  int DEFAULT_FAST_CDC_NORMALIZATION_LEVEL = 2;
+  int DEFAULT_FAST_CDC_SEED = 0;
 
-  public static final int DEFAULT_AVG_CHUNK_SIZE = 512 * 1024;
-  public static final int DEFAULT_NORMALIZATION_LEVEL = 2;
-  public static final int DEFAULT_SEED = 0;
+  /** The Remote Execution API chunking function represented by this configuration. */
+  ChunkingFunction.Value chunkingFunction();
 
-  public int minChunkSize() {
-    return avgChunkSize / 4;
-  }
+  /** Blobs larger than this should be chunked. */
+  long chunkingThreshold();
 
-  public int maxChunkSize() {
-    return avgChunkSize * 4;
-  }
+  /** Creates the local chunker that implements this configuration. */
+  ContentDefinedChunker createChunker(DigestUtil digestUtil);
 
-  /** Blobs larger than this should be chunked. Equal to maxChunkSize(). */
-  public long chunkingThreshold() {
-    return maxChunkSize();
-  }
-
-  public static ChunkingConfig defaults() {
-    return new ChunkingConfig(DEFAULT_AVG_CHUNK_SIZE, DEFAULT_NORMALIZATION_LEVEL, DEFAULT_SEED);
+  static FastCdc fastCdcDefaults() {
+    return new FastCdc(
+        DEFAULT_FAST_CDC_AVG_CHUNK_SIZE,
+        DEFAULT_FAST_CDC_NORMALIZATION_LEVEL,
+        DEFAULT_FAST_CDC_SEED);
   }
 
   @Nullable
@@ -50,20 +51,91 @@ public record ChunkingConfig(int avgChunkSize, int normalizationLevel, int seed)
     }
     CacheCapabilities cacheCap = capabilities.getCacheCapabilities();
 
+    FastCdc fastCdc = fastCdcFromCapabilities(cacheCap);
+    if (fastCdc != null) {
+      return fastCdc;
+    }
+
+    return repMaxCdcFromCapabilities(cacheCap);
+  }
+
+  @Nullable
+  private static FastCdc fastCdcFromCapabilities(CacheCapabilities cacheCap) {
     if (!cacheCap.hasFastCdc2020Params()) {
       return null;
     }
-
     FastCdc2020Params params = cacheCap.getFastCdc2020Params();
-    int avgSize = DEFAULT_AVG_CHUNK_SIZE;
     long configAvgSize = params.getAvgChunkSizeBytes();
-    if (configAvgSize >= 1024
-        && configAvgSize <= 1024 * 1024
-        && (configAvgSize & (configAvgSize - 1)) == 0) {
-      avgSize = (int) configAvgSize;
+    if (configAvgSize < 1024
+        || configAvgSize > 1024 * 1024
+        || (configAvgSize & (configAvgSize - 1)) != 0) {
+      return null;
     }
-    int seed = params.getSeed();
+    return new FastCdc(
+        (int) configAvgSize, DEFAULT_FAST_CDC_NORMALIZATION_LEVEL, params.getSeed());
+  }
 
-    return new ChunkingConfig(avgSize, DEFAULT_NORMALIZATION_LEVEL, seed);
+  @Nullable
+  private static RepMaxCdc repMaxCdcFromCapabilities(CacheCapabilities cacheCap) {
+    if (!cacheCap.hasRepMaxCdcParams()) {
+      return null;
+    }
+    RepMaxCdcParams params = cacheCap.getRepMaxCdcParams();
+    long minSizeBytes = params.getMinChunkSizeBytes();
+    long horizonSizeBytes = params.getHorizonSizeBytes();
+    long peekSizeBytes = 2 * minSizeBytes + horizonSizeBytes;
+    if (minSizeBytes < GearHash.WINDOW_SIZE
+        || horizonSizeBytes < 0
+        || peekSizeBytes < 0
+        || minSizeBytes > Integer.MAX_VALUE
+        || horizonSizeBytes > Integer.MAX_VALUE
+        || peekSizeBytes > Integer.MAX_VALUE) {
+      return null;
+    }
+    return new RepMaxCdc((int) minSizeBytes, (int) horizonSizeBytes);
+  }
+
+  /** Configuration for FastCDC 2020. */
+  record FastCdc(int avgChunkSize, int normalizationLevel, int seed) implements ChunkingConfig {
+    public int minChunkSize() {
+      return avgChunkSize / 4;
+    }
+
+    public int maxChunkSize() {
+      return avgChunkSize * 4;
+    }
+
+    @Override
+    public long chunkingThreshold() {
+      return maxChunkSize();
+    }
+
+    @Override
+    public ChunkingFunction.Value chunkingFunction() {
+      return ChunkingFunction.Value.FAST_CDC_2020;
+    }
+
+    @Override
+    public ContentDefinedChunker createChunker(DigestUtil digestUtil) {
+      return new FastCdcChunker(this, digestUtil);
+    }
+  }
+
+  /** Configuration for RepMaxCDC. */
+  record RepMaxCdc(int minSizeBytes, int horizonSizeBytes) implements ChunkingConfig {
+    @Override
+    public long chunkingThreshold() {
+      return 2L * minSizeBytes - 1;
+    }
+
+    @Override
+    public ChunkingFunction.Value chunkingFunction() {
+      return ChunkingFunction.Value.REP_MAX_CDC;
+    }
+
+    @Override
+    public ContentDefinedChunker createChunker(DigestUtil digestUtil) {
+      return new RepMaxCdcChunker(this, digestUtil);
+    }
   }
 }

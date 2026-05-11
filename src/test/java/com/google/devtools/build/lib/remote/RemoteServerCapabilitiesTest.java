@@ -20,9 +20,11 @@ import build.bazel.remote.execution.v2.CacheCapabilities;
 import build.bazel.remote.execution.v2.CapabilitiesGrpc.CapabilitiesImplBase;
 import build.bazel.remote.execution.v2.DigestFunction;
 import build.bazel.remote.execution.v2.ExecutionCapabilities;
+import build.bazel.remote.execution.v2.FastCdc2020Params;
 import build.bazel.remote.execution.v2.GetCapabilitiesRequest;
 import build.bazel.remote.execution.v2.PriorityCapabilities;
 import build.bazel.remote.execution.v2.PriorityCapabilities.PriorityRange;
+import build.bazel.remote.execution.v2.RepMaxCdcParams;
 import build.bazel.remote.execution.v2.RequestMetadata;
 import build.bazel.remote.execution.v2.ServerCapabilities;
 import com.google.common.collect.ImmutableList;
@@ -306,6 +308,87 @@ public class RemoteServerCapabilitiesTest {
         RemoteServerCapabilities.checkClientServerCompatibility(
             caps, remoteOptions, DigestFunction.Value.SHA256, ServerCapabilitiesRequirement.CACHE);
     assertThat(st.isOk()).isTrue();
+  }
+
+  @Test
+  public void testCheckClientServerCompatibility_chunkingSupportsFastCdc() throws Exception {
+    ServerCapabilities caps =
+        ServerCapabilities.newBuilder()
+            .setLowApiVersion(ApiVersion.low.toSemVer())
+            .setHighApiVersion(ApiVersion.high.toSemVer())
+            .setCacheCapabilities(
+                CacheCapabilities.newBuilder()
+                    .addDigestFunctions(DigestFunction.Value.SHA256)
+                    .setSplitBlobSupport(true)
+                    .setSpliceBlobSupport(true)
+                    .setFastCdc2020Params(
+                        FastCdc2020Params.newBuilder().setAvgChunkSizeBytes(512 * 1024).build())
+                    .build())
+            .build();
+    RemoteOptions remoteOptions =
+        Options.parse(RemoteOptions.class, "--experimental_remote_cache_chunking").getOptions();
+    remoteOptions.setRemoteCache("server:port");
+
+    RemoteServerCapabilities.ClientServerCompatibilityStatus st =
+        RemoteServerCapabilities.checkClientServerCompatibility(
+            caps, remoteOptions, DigestFunction.Value.SHA256, ServerCapabilitiesRequirement.CACHE);
+
+    assertThat(st.getErrors()).isEmpty();
+  }
+
+  @Test
+  public void testCheckClientServerCompatibility_chunkingSupportsRepMaxCdc() throws Exception {
+    ServerCapabilities caps =
+        ServerCapabilities.newBuilder()
+            .setLowApiVersion(ApiVersion.low.toSemVer())
+            .setHighApiVersion(ApiVersion.high.toSemVer())
+            .setCacheCapabilities(
+                CacheCapabilities.newBuilder()
+                    .addDigestFunctions(DigestFunction.Value.SHA256)
+                    .setSplitBlobSupport(true)
+                    .setSpliceBlobSupport(true)
+                    .setRepMaxCdcParams(
+                        RepMaxCdcParams.newBuilder()
+                            .setMinChunkSizeBytes(256 * 1024)
+                            .setHorizonSizeBytes(8 * 256 * 1024)
+                            .build())
+                    .build())
+            .build();
+    RemoteOptions remoteOptions =
+        Options.parse(RemoteOptions.class, "--experimental_remote_cache_chunking").getOptions();
+    remoteOptions.setRemoteCache("server:port");
+
+    RemoteServerCapabilities.ClientServerCompatibilityStatus st =
+        RemoteServerCapabilities.checkClientServerCompatibility(
+            caps, remoteOptions, DigestFunction.Value.SHA256, ServerCapabilitiesRequirement.CACHE);
+
+    assertThat(st.getErrors()).isEmpty();
+  }
+
+  @Test
+  public void testCheckClientServerCompatibility_chunkingWithoutAlgorithmReportsError()
+      throws Exception {
+    ServerCapabilities caps =
+        ServerCapabilities.newBuilder()
+            .setLowApiVersion(ApiVersion.low.toSemVer())
+            .setHighApiVersion(ApiVersion.high.toSemVer())
+            .setCacheCapabilities(
+                CacheCapabilities.newBuilder()
+                    .addDigestFunctions(DigestFunction.Value.SHA256)
+                    .setSplitBlobSupport(true)
+                    .setSpliceBlobSupport(true)
+                    .build())
+            .build();
+    RemoteOptions remoteOptions =
+        Options.parse(RemoteOptions.class, "--experimental_remote_cache_chunking").getOptions();
+    remoteOptions.setRemoteCache("server:port");
+
+    RemoteServerCapabilities.ClientServerCompatibilityStatus st =
+        RemoteServerCapabilities.checkClientServerCompatibility(
+            caps, remoteOptions, DigestFunction.Value.SHA256, ServerCapabilitiesRequirement.CACHE);
+
+    assertThat(st.getErrors()).hasSize(1);
+    assertThat(st.getErrors().get(0)).contains("FastCDC 2020 or RepMaxCDC");
   }
 
   @Test

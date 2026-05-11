@@ -16,7 +16,9 @@ package com.google.devtools.build.lib.remote.chunking;
 import static com.google.common.truth.Truth.assertThat;
 
 import build.bazel.remote.execution.v2.CacheCapabilities;
+import build.bazel.remote.execution.v2.ChunkingFunction;
 import build.bazel.remote.execution.v2.FastCdc2020Params;
+import build.bazel.remote.execution.v2.RepMaxCdcParams;
 import build.bazel.remote.execution.v2.ServerCapabilities;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -27,42 +29,43 @@ import org.junit.runners.JUnit4;
 public class ChunkingConfigTest {
 
   @Test
-  public void defaults_returnsExpectedValues() {
-    ChunkingConfig config = ChunkingConfig.defaults();
+  public void fastCdcDefaults_returnsExpectedValues() {
+    ChunkingConfig.FastCdc config = ChunkingConfig.fastCdcDefaults();
 
     assertThat(config.avgChunkSize()).isEqualTo(512 * 1024);
     assertThat(config.normalizationLevel()).isEqualTo(2);
     assertThat(config.seed()).isEqualTo(0);
     assertThat(config.chunkingThreshold()).isEqualTo(512 * 1024 * 4);
+    assertThat(config.chunkingFunction()).isEqualTo(ChunkingFunction.Value.FAST_CDC_2020);
   }
 
   @Test
-  public void minChunkSize_returnsQuarterOfAvg() {
-    ChunkingConfig config = new ChunkingConfig(1024, 2, 0);
+  public void fastCdc_minChunkSize_returnsQuarterOfAvg() {
+    ChunkingConfig.FastCdc config = new ChunkingConfig.FastCdc(1024, 2, 0);
 
     assertThat(config.minChunkSize()).isEqualTo(256);
   }
 
   @Test
-  public void maxChunkSize_returnsFourTimesAvg() {
-    ChunkingConfig config = new ChunkingConfig(1024, 2, 0);
+  public void fastCdc_maxChunkSize_returnsFourTimesAvg() {
+    ChunkingConfig.FastCdc config = new ChunkingConfig.FastCdc(1024, 2, 0);
 
     assertThat(config.maxChunkSize()).isEqualTo(4096);
   }
 
   @Test
-  public void chunkingThreshold_equalsMaxChunkSize() {
-    ChunkingConfig config = new ChunkingConfig(1024, 2, 0);
+  public void fastCdc_chunkingThreshold_equalsMaxChunkSize() {
+    ChunkingConfig.FastCdc config = new ChunkingConfig.FastCdc(1024, 2, 0);
 
     assertThat(config.chunkingThreshold()).isEqualTo(config.maxChunkSize());
   }
 
   @Test
-  public void minAndMaxChunkSize_withDefaultConfig() {
-    ChunkingConfig config = ChunkingConfig.defaults();
+  public void repMaxCdc_chunkingThreshold_chunksAtTwoMinSize() {
+    ChunkingConfig.RepMaxCdc config = new ChunkingConfig.RepMaxCdc(1024, 8192);
 
-    assertThat(config.minChunkSize()).isEqualTo(128 * 1024);
-    assertThat(config.maxChunkSize()).isEqualTo(2048 * 1024);
+    assertThat(config.chunkingThreshold()).isEqualTo(2047);
+    assertThat(config.chunkingFunction()).isEqualTo(ChunkingFunction.Value.REP_MAX_CDC);
   }
 
   @Test
@@ -75,7 +78,7 @@ public class ChunkingConfigTest {
   }
 
   @Test
-  public void fromServerCapabilities_withoutFastCdcParams_returnsNull() {
+  public void fromServerCapabilities_withoutChunkingParams_returnsNull() {
     ServerCapabilities capabilities =
         ServerCapabilities.newBuilder()
             .setCacheCapabilities(CacheCapabilities.getDefaultInstance())
@@ -87,7 +90,7 @@ public class ChunkingConfigTest {
   }
 
   @Test
-  public void fromServerCapabilities_withFastCdcParams_returnsConfig() {
+  public void fromServerCapabilities_withFastCdcParams_returnsFastCdcConfig() {
     ServerCapabilities capabilities =
         ServerCapabilities.newBuilder()
             .setCacheCapabilities(
@@ -102,33 +105,54 @@ public class ChunkingConfigTest {
 
     ChunkingConfig config = ChunkingConfig.fromServerCapabilities(capabilities);
 
-    assertThat(config).isNotNull();
-    assertThat(config.avgChunkSize()).isEqualTo(256 * 1024);
-    assertThat(config.seed()).isEqualTo(42);
-    assertThat(config.chunkingThreshold()).isEqualTo(256 * 1024 * 4);
+    assertThat(config).isEqualTo(new ChunkingConfig.FastCdc(256 * 1024, 2, 42));
   }
 
   @Test
-  public void fromServerCapabilities_withDefaultFastCdcParams_returnsDefaults() {
+  public void fromServerCapabilities_withBothAlgorithms_returnsFastCdcConfig() {
     ServerCapabilities capabilities =
         ServerCapabilities.newBuilder()
             .setCacheCapabilities(
                 CacheCapabilities.newBuilder()
                     .setFastCdc2020Params(
                         FastCdc2020Params.newBuilder()
-                            .setAvgChunkSizeBytes(512 * 1024)
-                            .setSeed(0)
+                            .setAvgChunkSizeBytes(256 * 1024)
+                            .setSeed(42)
+                            .build())
+                    .setRepMaxCdcParams(
+                        RepMaxCdcParams.newBuilder()
+                            .setMinChunkSizeBytes(128 * 1024)
+                            .setHorizonSizeBytes(1024 * 1024)
                             .build())
                     .build())
             .build();
 
     ChunkingConfig config = ChunkingConfig.fromServerCapabilities(capabilities);
 
-    assertThat(config).isEqualTo(ChunkingConfig.defaults());
+    assertThat(config).isEqualTo(new ChunkingConfig.FastCdc(256 * 1024, 2, 42));
   }
 
   @Test
-  public void fromServerCapabilities_nonPowerOfTwoAvgSize_fallsBackToDefault() {
+  public void fromServerCapabilities_withRepMaxCdcParams_returnsRepMaxCdcConfig() {
+    ServerCapabilities capabilities =
+        ServerCapabilities.newBuilder()
+            .setCacheCapabilities(
+                CacheCapabilities.newBuilder()
+                    .setRepMaxCdcParams(
+                        RepMaxCdcParams.newBuilder()
+                            .setMinChunkSizeBytes(128 * 1024)
+                            .setHorizonSizeBytes(1024 * 1024)
+                            .build())
+                    .build())
+            .build();
+
+    ChunkingConfig config = ChunkingConfig.fromServerCapabilities(capabilities);
+
+    assertThat(config).isEqualTo(new ChunkingConfig.RepMaxCdc(128 * 1024, 1024 * 1024));
+  }
+
+  @Test
+  public void fromServerCapabilities_invalidFastCdcParams_ignoresFastCdc() {
     ServerCapabilities capabilities =
         ServerCapabilities.newBuilder()
             .setCacheCapabilities(
@@ -140,7 +164,46 @@ public class ChunkingConfigTest {
 
     ChunkingConfig config = ChunkingConfig.fromServerCapabilities(capabilities);
 
-    assertThat(config).isNotNull();
-    assertThat(config.avgChunkSize()).isEqualTo(ChunkingConfig.DEFAULT_AVG_CHUNK_SIZE);
+    assertThat(config).isNull();
+  }
+
+  @Test
+  public void fromServerCapabilities_invalidFastCdcWithValidRepMaxCdc_returnsRepMaxCdcConfig() {
+    ServerCapabilities capabilities =
+        ServerCapabilities.newBuilder()
+            .setCacheCapabilities(
+                CacheCapabilities.newBuilder()
+                    .setFastCdc2020Params(
+                        FastCdc2020Params.newBuilder().setAvgChunkSizeBytes(300 * 1024).build())
+                    .setRepMaxCdcParams(
+                        RepMaxCdcParams.newBuilder()
+                            .setMinChunkSizeBytes(128 * 1024)
+                            .setHorizonSizeBytes(1024 * 1024)
+                            .build())
+                    .build())
+            .build();
+
+    ChunkingConfig config = ChunkingConfig.fromServerCapabilities(capabilities);
+
+    assertThat(config).isEqualTo(new ChunkingConfig.RepMaxCdc(128 * 1024, 1024 * 1024));
+  }
+
+  @Test
+  public void fromServerCapabilities_invalidRepMaxCdcParams_ignoresRepMaxCdc() {
+    ServerCapabilities capabilities =
+        ServerCapabilities.newBuilder()
+            .setCacheCapabilities(
+                CacheCapabilities.newBuilder()
+                    .setRepMaxCdcParams(
+                        RepMaxCdcParams.newBuilder()
+                            .setMinChunkSizeBytes(GearHash.WINDOW_SIZE - 1)
+                            .setHorizonSizeBytes(1024)
+                            .build())
+                    .build())
+            .build();
+
+    ChunkingConfig config = ChunkingConfig.fromServerCapabilities(capabilities);
+
+    assertThat(config).isNull();
   }
 }

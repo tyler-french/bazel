@@ -20,6 +20,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import build.bazel.remote.execution.v2.ChunkingFunction;
 import build.bazel.remote.execution.v2.Digest;
 import build.bazel.remote.execution.v2.SplitBlobResponse;
 import com.google.common.util.concurrent.Futures;
@@ -58,13 +59,19 @@ public class ChunkedBlobDownloaderTest {
   public void setUp() {
     when(grpcCacheClient.shouldVerifyDownloads()).thenReturn(true);
     downloader =
-        new ChunkedBlobDownloader(grpcCacheClient, combinedCache, DIGEST_UTIL, /* concurrency= */ 8);
+        new ChunkedBlobDownloader(
+            grpcCacheClient,
+            combinedCache,
+            DIGEST_UTIL,
+            ChunkingFunction.Value.FAST_CDC_2020,
+            /* concurrency= */ 8);
   }
 
   @Test
   public void downloadChunked_splitBlobReturnsNull_throwsCacheNotFound() {
     Digest blobDigest = DIGEST_UTIL.compute(new byte[] {1, 2, 3});
-    when(grpcCacheClient.splitBlob(any(), eq(blobDigest))).thenReturn(null);
+    when(grpcCacheClient.splitBlob(any(), eq(blobDigest), eq(ChunkingFunction.Value.FAST_CDC_2020)))
+        .thenReturn(null);
 
     assertThrows(
         CacheNotFoundException.class,
@@ -79,7 +86,7 @@ public class ChunkedBlobDownloaderTest {
 
     SplitBlobResponse splitResponse =
         SplitBlobResponse.newBuilder().addChunkDigests(chunkDigest).build();
-    when(grpcCacheClient.splitBlob(any(), eq(blobDigest)))
+    when(grpcCacheClient.splitBlob(any(), eq(blobDigest), eq(ChunkingFunction.Value.FAST_CDC_2020)))
         .thenReturn(Futures.immediateFuture(splitResponse));
     when(combinedCache.downloadBlob(any(), eq(chunkDigest)))
         .thenReturn(Futures.immediateFuture(chunkData));
@@ -106,7 +113,7 @@ public class ChunkedBlobDownloaderTest {
             .addChunkDigests(chunk2Digest)
             .addChunkDigests(chunk3Digest)
             .build();
-    when(grpcCacheClient.splitBlob(any(), eq(blobDigest)))
+    when(grpcCacheClient.splitBlob(any(), eq(blobDigest), eq(ChunkingFunction.Value.FAST_CDC_2020)))
         .thenReturn(Futures.immediateFuture(splitResponse));
     when(combinedCache.downloadBlob(any(), eq(chunk1Digest)))
         .thenReturn(Futures.immediateFuture(chunk1Data));
@@ -129,7 +136,7 @@ public class ChunkedBlobDownloaderTest {
     Digest blobDigest = DIGEST_UTIL.compute(new byte[0]);
 
     SplitBlobResponse splitResponse = SplitBlobResponse.getDefaultInstance();
-    when(grpcCacheClient.splitBlob(any(), eq(blobDigest)))
+    when(grpcCacheClient.splitBlob(any(), eq(blobDigest), eq(ChunkingFunction.Value.FAST_CDC_2020)))
         .thenReturn(Futures.immediateFuture(splitResponse));
 
     ByteArrayOutputStream out = new ByteArrayOutputStream();
@@ -151,7 +158,7 @@ public class ChunkedBlobDownloaderTest {
             .addChunkDigests(chunk1Digest)
             .addChunkDigests(chunk2Digest)
             .build();
-    when(grpcCacheClient.splitBlob(any(), eq(blobDigest)))
+    when(grpcCacheClient.splitBlob(any(), eq(blobDigest), eq(ChunkingFunction.Value.FAST_CDC_2020)))
         .thenReturn(Futures.immediateFuture(splitResponse));
     when(combinedCache.downloadBlob(any(), eq(chunk1Digest)))
         .thenReturn(Futures.immediateFuture(chunk1Data));
@@ -170,7 +177,7 @@ public class ChunkedBlobDownloaderTest {
 
     SplitBlobResponse splitResponse =
         SplitBlobResponse.newBuilder().addChunkDigests(chunkDigest).build();
-    when(grpcCacheClient.splitBlob(any(), eq(blobDigest)))
+    when(grpcCacheClient.splitBlob(any(), eq(blobDigest), eq(ChunkingFunction.Value.FAST_CDC_2020)))
         .thenReturn(Futures.immediateFuture(splitResponse));
     when(combinedCache.downloadBlob(any(), eq(chunkDigest)))
         .thenReturn(Futures.immediateFuture(chunkData));
@@ -193,7 +200,7 @@ public class ChunkedBlobDownloaderTest {
 
     SplitBlobResponse splitResponse =
         SplitBlobResponse.newBuilder().addChunkDigests(chunkDigest).build();
-    when(grpcCacheClient.splitBlob(any(), eq(blobDigest)))
+    when(grpcCacheClient.splitBlob(any(), eq(blobDigest), eq(ChunkingFunction.Value.FAST_CDC_2020)))
         .thenReturn(Futures.immediateFuture(splitResponse));
     when(combinedCache.downloadBlob(any(), eq(chunkDigest)))
         .thenReturn(Futures.immediateFuture(chunkData));

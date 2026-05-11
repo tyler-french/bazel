@@ -16,6 +16,7 @@ package com.google.devtools.build.lib.remote;
 
 import static com.google.devtools.build.lib.remote.util.Utils.getFromFuture;
 
+import build.bazel.remote.execution.v2.ChunkingFunction;
 import build.bazel.remote.execution.v2.Digest;
 import build.bazel.remote.execution.v2.SplitBlobResponse;
 import com.google.common.collect.ImmutableList;
@@ -35,16 +36,19 @@ public class ChunkedBlobDownloader {
   private final GrpcCacheClient grpcCacheClient;
   private final CombinedCache combinedCache;
   private final DigestUtil digestUtil;
+  private final ChunkingFunction.Value chunkingFunction;
   private final int concurrency;
 
   public ChunkedBlobDownloader(
       GrpcCacheClient grpcCacheClient,
       CombinedCache combinedCache,
       DigestUtil digestUtil,
+      ChunkingFunction.Value chunkingFunction,
       int concurrency) {
     this.grpcCacheClient = grpcCacheClient;
     this.combinedCache = combinedCache;
     this.digestUtil = digestUtil;
+    this.chunkingFunction = chunkingFunction;
     this.concurrency = concurrency;
   }
 
@@ -75,7 +79,7 @@ public class ChunkedBlobDownloader {
       return ImmutableList.of();
     }
     ListenableFuture<SplitBlobResponse> splitResponseFuture =
-        grpcCacheClient.splitBlob(context, blobDigest);
+        grpcCacheClient.splitBlob(context, blobDigest, chunkingFunction);
     if (splitResponseFuture == null) {
       throw new CacheNotFoundException(blobDigest);
     }

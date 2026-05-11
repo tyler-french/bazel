@@ -29,6 +29,7 @@ import build.bazel.remote.execution.v2.Action;
 import build.bazel.remote.execution.v2.ActionCacheGrpc.ActionCacheImplBase;
 import build.bazel.remote.execution.v2.ActionResult;
 import build.bazel.remote.execution.v2.Command;
+import build.bazel.remote.execution.v2.ChunkingFunction;
 import build.bazel.remote.execution.v2.ContentAddressableStorageGrpc.ContentAddressableStorageImplBase;
 import build.bazel.remote.execution.v2.Digest;
 import build.bazel.remote.execution.v2.DigestFunction;
@@ -40,6 +41,10 @@ import build.bazel.remote.execution.v2.FindMissingBlobsResponse;
 import build.bazel.remote.execution.v2.GetActionResultRequest;
 import build.bazel.remote.execution.v2.RequestMetadata;
 import build.bazel.remote.execution.v2.ServerCapabilities;
+import build.bazel.remote.execution.v2.SpliceBlobRequest;
+import build.bazel.remote.execution.v2.SpliceBlobResponse;
+import build.bazel.remote.execution.v2.SplitBlobRequest;
+import build.bazel.remote.execution.v2.SplitBlobResponse;
 import build.bazel.remote.execution.v2.Tree;
 import build.bazel.remote.execution.v2.UpdateActionResultRequest;
 import com.github.luben.zstd.Zstd;
@@ -283,6 +288,70 @@ public class GrpcCacheClientTest {
 
     fakeServer.shutdownNow();
     fakeServer.awaitTermination();
+  }
+
+  @Test
+  public void spliceBlob_usesConfiguredChunkingFunction() throws Exception {
+    AtomicReference<SpliceBlobRequest> observedRequest = new AtomicReference<>();
+    serviceRegistry.addService(
+        new ContentAddressableStorageImplBase() {
+          @Override
+          public void spliceBlob(
+              SpliceBlobRequest request, StreamObserver<SpliceBlobResponse> responseObserver) {
+            observedRequest.set(request);
+            responseObserver.onNext(
+                SpliceBlobResponse.newBuilder().setBlobDigest(request.getBlobDigest()).build());
+            responseObserver.onCompleted();
+          }
+        });
+    RemoteOptions options =
+        Options.parse(RemoteOptions.class, "--experimental_remote_cache_chunking").getOptions();
+    GrpcCacheClient client = newClient(options);
+    Digest blobDigest = DIGEST_UTIL.compute(new byte[] {1, 2, 3, 4});
+    ImmutableList<Digest> chunkDigests =
+        ImmutableList.of(
+            DIGEST_UTIL.compute(new byte[] {1, 2}), DIGEST_UTIL.compute(new byte[] {3, 4}));
+
+    getFromFuture(
+        client.spliceBlob(
+            context, blobDigest, chunkDigests, ChunkingFunction.Value.REP_MAX_CDC));
+
+    assertThat(observedRequest.get().getChunkingFunction())
+        .isEqualTo(ChunkingFunction.Value.REP_MAX_CDC);
+  }
+
+  @Test
+  public void splitBlob_usesConfiguredChunkingFunction() throws Exception {
+    AtomicReference<SplitBlobRequest> observedRequest = new AtomicReference<>();
+    Digest chunkDigest = DIGEST_UTIL.compute(new byte[] {1, 2});
+    serviceRegistry.addService(
+        new ContentAddressableStorageImplBase() {
+          @Override
+          public void splitBlob(
+              SplitBlobRequest request, StreamObserver<SplitBlobResponse> responseObserver) {
+            observedRequest.set(request);
+            responseObserver.onNext(
+                SplitBlobResponse.newBuilder()
+                    .setChunkingFunction(ChunkingFunction.Value.REP_MAX_CDC)
+                    .addChunkDigests(chunkDigest)
+                    .build());
+            responseObserver.onCompleted();
+          }
+        });
+    RemoteOptions options =
+        Options.parse(RemoteOptions.class, "--experimental_remote_cache_chunking").getOptions();
+    GrpcCacheClient client = newClient(options);
+
+    SplitBlobResponse response =
+        getFromFuture(
+            client.splitBlob(
+                context,
+                DIGEST_UTIL.compute(new byte[] {1, 2}),
+                ChunkingFunction.Value.REP_MAX_CDC));
+
+    assertThat(response.getChunkDigestsList()).containsExactly(chunkDigest);
+    assertThat(observedRequest.get().getChunkingFunction())
+        .isEqualTo(ChunkingFunction.Value.REP_MAX_CDC);
   }
 
   @Test

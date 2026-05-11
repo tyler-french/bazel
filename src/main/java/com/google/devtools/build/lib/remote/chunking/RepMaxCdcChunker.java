@@ -21,33 +21,47 @@ import com.google.devtools.build.lib.remote.util.DigestUtil;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /**
  * RepMaxCDC content-defined chunker.
  *
- * <p>RepMaxCDC (Repeated Maximum Content-Defined Chunking) applies a maximum-hash chunking
- * strategy iteratively to produce chunks in the range [minSizeBytes, 2*minSizeBytes). This gives a
- * tight 2:1 ratio between the maximum and minimum chunk sizes, yielding better deduplication than
- * FastCDC for many workloads.
+ * <p>This is a Java port of buildbarn/go-cdc's optimized RepMaxCDC implementation. The state
+ * machine and comments intentionally follow that implementation closely. See
+ * https://github.com/buildbarn/go-cdc/blob/main/rep_max_content_defined_chunker.go.
  *
- * <p>Algorithm: within each window of [minSizeBytes, minSizeBytes+horizonSizeBytes) bytes, the Gear
- * rolling hash is computed at every position. The position with the maximum hash value is selected
- * as a candidate cut point. If the resulting chunk would be >= 2*minSizeBytes, the algorithm narrows
- * the window to the candidate position and repeats, guaranteeing termination with a chunk in
- * [minSizeBytes, 2*minSizeBytes).
- *
- * <p>This implementation uses a staircase optimization that avoids repeated scanning: during a
- * single left-to-right pass, we track the last position with a new-maximum hash that falls within
- * [minSizeBytes, 2*minSizeBytes). This is equivalent to the iterative narrowing but runs in O(n)
- * time with O(1) extra space.
- *
- * @see <a href="https://github.com/buildbarn/go-cdc">go-cdc reference implementation</a>
+ * <p>RepMaxCDC expands on MaxCDC by repeatedly applying the chunking process until chunks fall in
+ * the range {@code [minSizeBytes, 2 * minSizeBytes)}. Like MaxCDC, it has a read-ahead parameter,
+ * but RepMaxCDC uses that value only as a chunking-quality horizon: {@code 0} yields uniform chunks
+ * of {@code minSizeBytes}, while a positive value preserves the best cut found in the range {@code
+ * [minSizeBytes, minSizeBytes + horizonSizeBytes]}. Unlike MaxCDC, increasing the horizon does not
+ * reduce quality through a wider maximum/minimum chunk-size ratio, though returns diminish as the
+ * horizon grows.
  */
-public class RepMaxCdcChunker implements ContentDefinedChunker {
+public final class RepMaxCdcChunker implements ContentDefinedChunker {
   private final int minSizeBytes;
-  private final int horizonSizeBytes;
+  private final int peekSizeBytes;
   private final DigestUtil digestUtil;
+
+  // List of chunks for which no future data can influence their length. For each chunk, its size
+  // is stored. Chunks are stored in reverse order, so that they can be popped from the end.
+  private final IntList completeChunks;
+
+  // List of cutting points that will determine the length of future chunks. The hashes at the
+  // positions of the cutting points in this list will be strictly monotonically increasing.
+  //
+  // Cutting points are addressed relative to the first eligible position at which they may be
+  // placed (i.e., the end of the last complete chunk, plus the minimum chunk size). This means that
+  // the first entry is always equal to zero.
+  private final IntList incompleteChunks = new IntList(32);
+
+  // The rolling hash value corresponding to the position up to where input data has been processed.
+  private long currentHash;
+
+  // The rolling hash value corresponding to the position of last incomplete chunk. Any new
+  // incomplete chunk must have a hash value that is higher than this one.
+  private long bestHash;
 
   public RepMaxCdcChunker(ChunkingConfig.RepMaxCdc config, DigestUtil digestUtil) {
     this(config.minSizeBytes(), config.horizonSizeBytes(), digestUtil);
@@ -61,94 +75,331 @@ public class RepMaxCdcChunker implements ContentDefinedChunker {
         minSizeBytes);
     checkArgument(
         horizonSizeBytes >= 0, "horizonSizeBytes must be non-negative, got %s", horizonSizeBytes);
+    long peekSizeBytes = 2L * minSizeBytes + horizonSizeBytes;
+    checkArgument(
+        peekSizeBytes <= Integer.MAX_VALUE,
+        "2 * minSizeBytes + horizonSizeBytes must fit in an int, got %s",
+        peekSizeBytes);
     this.minSizeBytes = minSizeBytes;
-    this.horizonSizeBytes = horizonSizeBytes;
+    this.peekSizeBytes = (int) peekSizeBytes;
     this.digestUtil = digestUtil;
+    this.completeChunks = new IntList(Math.max(1, horizonSizeBytes / minSizeBytes + 1));
   }
 
   @Override
   public List<Digest> chunkToDigests(InputStream input) throws IOException {
+    reset();
     List<Digest> digests = new ArrayList<>();
-    int peekSizeBytes = 2 * minSizeBytes + horizonSizeBytes;
     byte[] buf = new byte[peekSizeBytes];
     int cursor = 0;
     int end = 0;
     boolean eof = false;
 
     while (true) {
+      int requiredBytes = completeChunks.size() > 0 ? completeChunks.getLast() : peekSizeBytes;
       int available = end - cursor;
-
-      // Refill buffer when we have less than a full peek window
-      if (available < peekSizeBytes && !eof) {
+      if (available < requiredBytes && !eof) {
         if (cursor > 0 && available > 0) {
           System.arraycopy(buf, cursor, buf, 0, available);
         }
         cursor = 0;
         end = available;
-        while (end < peekSizeBytes) {
-          int bytesRead = input.read(buf, end, peekSizeBytes - end);
-          if (bytesRead == -1) {
+
+        while (end < requiredBytes) {
+          int n = input.read(buf, end, buf.length - end);
+          if (n == -1) {
             eof = true;
             break;
           }
-          end += bytesRead;
+          end += n;
         }
-        available = end - cursor;
       }
 
+      available = end - cursor;
       if (available == 0) {
-        break;
+        return digests;
       }
 
       int chunkSizeBytes = nextChunk(buf, cursor, available);
+      if (chunkSizeBytes > available) {
+        throw new IOException("unexpected end of input while reading RepMaxCDC chunk");
+      }
       digests.add(digestUtil.compute(buf, cursor, chunkSizeBytes));
       cursor += chunkSizeBytes;
     }
-
-    return digests;
   }
 
-  /**
-   * Finds the next chunk boundary using the RepMaxCDC algorithm.
-   *
-   * <p>The key insight: scanning left-to-right while tracking positions where the hash reaches a
-   * new maximum produces a "staircase" of monotonically increasing hash values. The iterative
-   * narrowing of RepMaxCDC is equivalent to walking back through this staircase to find the last
-   * entry whose offset from the start is less than minSizeBytes. We only need to track that single
-   * entry, making this O(1) extra space.
-   */
-  int nextChunk(byte[] buf, int off, int len) {
-    // Final chunk: if remaining data is less than 2*minSizeBytes, return it all
+  private void reset() {
+    completeChunks.clear();
+    incompleteChunks.clear();
+    currentHash = 0;
+    bestHash = 0;
+  }
+
+  private int nextChunk(byte[] d, int off, int len) {
+    // If the previous iteration yielded multiple chunks, we can return them without peeking the
+    // full horizon. Doing so allows us to discard data as aggressively as possible. This reduces
+    // the amount of data that needs to be retained (copied) when the read buffer is refilled.
+    if (completeChunks.size() > 0) {
+      return completeChunks.popLast();
+    }
+
+    // Gain access to the data corresponding to the next chunk(s). If we're reaching the end of the
+    // input, either consume all data or leave at least minSizeBytes behind. This ensures that all
+    // chunks of the file are at least minSizeBytes in size, assuming the file is as well.
     if (len < 2 * minSizeBytes) {
       return len;
     }
+    int effectiveLen = len - minSizeBytes;
 
-    // Reserve minSizeBytes at the end to guarantee the next chunk has at least minSizeBytes bytes
-    int searchEnd = len - minSizeBytes;
-
-    // Warm up the Gear hash over the gearHashWindowSizeBytes bytes preceding the first candidate
-    // cut position
-    long gearHash = 0;
-    for (int i = minSizeBytes - GearHash.WINDOW_SIZE; i < minSizeBytes; i++) {
-      gearHash = (gearHash << 1) + GearHash.GEAR[buf[off + i] & 0xFF];
+    // Extract the final incomplete chunk from the stack, as it denotes where the previous call
+    // stopped hashing the input.
+    int currentChunk;
+    long currentHash = this.currentHash;
+    long bestHash = this.bestHash;
+    if (incompleteChunks.size() >= 2) {
+      currentChunk = incompleteChunks.getLast();
+      incompleteChunks.truncate(incompleteChunks.size() - 1);
+    } else {
+      // This is the very first chunk. We know that the first minSizeBytes positions can't contain a
+      // cut. Skip them.
+      incompleteChunks.clear();
+      incompleteChunks.add(0);
+      currentHash = 0;
+      int warmupStart = off + minSizeBytes - GearHash.WINDOW_SIZE;
+      int warmupEnd = off + minSizeBytes;
+      for (int i = warmupStart; i < warmupEnd; i++) {
+        currentHash = (currentHash << 1) + GearHash.GEAR[d[i] & 0xFF];
+      }
+      bestHash = currentHash;
+      currentChunk = 0;
     }
 
-    // Scan from minSizeBytes to searchEnd, tracking the last position with a new-maximum hash
-    // that would produce a valid chunk (size < 2*minSizeBytes).
-    long bestGearHash = 0;
-    int bestCutOffsetBytes = 0; // relative to minSizeBytes
+    int uncompletedRegionStart = minSizeBytes + currentChunk;
+    while (true) {
+      // Start hashing data where the previous call left off. Stop hashing before the distance
+      // between two consecutive potential cutting points becomes minSizeBytes in size, as this
+      // allows us to complete a chunk.
+      int hashRegionLen = effectiveLen - uncompletedRegionStart;
+      int originalOldChunksCount = -1;
+      int bytesBeforeMinChunkSize =
+          incompleteChunks.getLast() + minSizeBytes - 1 - currentChunk;
+      if (hashRegionLen > bytesBeforeMinChunkSize) {
+        hashRegionLen = bytesBeforeMinChunkSize;
+        originalOldChunksCount = incompleteChunks.size();
+      } else if (hashRegionLen == 0) {
+        break;
+      }
 
-    for (int i = minSizeBytes; i < searchEnd; i++) {
-      gearHash = (gearHash << 1) + GearHash.GEAR[buf[off + i] & 0xFF];
-      if (Long.compareUnsigned(gearHash, bestGearHash) > 0) {
-        bestGearHash = gearHash;
-        int offsetBytes = i - minSizeBytes;
-        if (offsetBytes < minSizeBytes) {
-          bestCutOffsetBytes = offsetBytes;
+      // Preserve all offsets at which the hash increases.
+      int hashRegionStart = off + uncompletedRegionStart;
+      for (int i = 0; i < hashRegionLen; i++) {
+        currentHash = (currentHash << 1) + GearHash.GEAR[d[hashRegionStart + i] & 0xFF];
+        if (Long.compareUnsigned(bestHash, currentHash) < 0) {
+          bestHash = currentHash;
+          incompleteChunks.add(currentChunk + i + 1);
+        }
+      }
+
+      if (incompleteChunks.size() == originalOldChunksCount) {
+        // The loop above did not yield any new cutting points, and the next byte is minSizeBytes
+        // away from the last cutting point. This means we can complete all chunks up to this point.
+        int previousCompleteChunksCount = completeChunks.size();
+        int nextChunk = incompleteChunks.getLast();
+        for (int i = incompleteChunks.size() - 3; nextChunk >= minSizeBytes && i >= 0; i--) {
+          int chunk = incompleteChunks.get(i);
+          int sizeBytes = nextChunk - chunk;
+          if (sizeBytes >= minSizeBytes) {
+            completeChunks.add(sizeBytes);
+            nextChunk = chunk;
+            i--;
+          }
+        }
+        completeChunks.add(minSizeBytes + nextChunk);
+        completeChunks.reverseRange(previousCompleteChunksCount, completeChunks.size());
+
+        incompleteChunks.truncate(1);
+        currentChunk = 0;
+        currentHash =
+            (currentHash << 1)
+                + GearHash.GEAR[d[off + uncompletedRegionStart + hashRegionLen] & 0xFF];
+        bestHash = currentHash;
+        uncompletedRegionStart += hashRegionLen + 1;
+      } else {
+        currentChunk += hashRegionLen;
+        uncompletedRegionStart += hashRegionLen;
+      }
+    }
+
+    // Processed the full horizon. Return the first chunk.
+    incompleteChunks.add(currentChunk);
+    int firstChunk;
+    if (completeChunks.size() > 0) {
+      completeChunks.reverse();
+      firstChunk = completeChunks.popLast();
+    } else {
+      // The process above did not yield any complete chunks, either because we reached the end of
+      // the file or the horizon size wasn't large enough.
+      //
+      // Ensure that we pick a cutting point respecting the maximum chunk size, that still allows us
+      // to pick the most optimal cutting point in the horizon later on.
+      int firstChunkIndex = incompleteChunks.size() - 2;
+      for (int maxChunk = incompleteChunks.get(firstChunkIndex) - minSizeBytes,
+              i = firstChunkIndex - 2;
+          maxChunk >= 0 && i >= 0;
+          i--) {
+        int chunk = incompleteChunks.get(i);
+        if (chunk <= maxChunk) {
+          firstChunkIndex = i;
+          maxChunk = chunk - minSizeBytes;
+          i--;
+        }
+      }
+      firstChunk = minSizeBytes + incompleteChunks.get(firstChunkIndex);
+
+      // There will be potential cutting points after the selected one that are no longer eligible,
+      // as those would violate the minimum chunk size. These should be removed from the list.
+      int reusableChunkIndex = firstChunkIndex + 1;
+      while (true) {
+        int offsetInSecondChunk = incompleteChunks.get(reusableChunkIndex) - firstChunk;
+        if (offsetInSecondChunk >= 0) {
+          // This cutting point and the ones after it should be kept.
+          for (int i = reusableChunkIndex; i < incompleteChunks.size(); i++) {
+            incompleteChunks.set(i, incompleteChunks.get(i) - firstChunk);
+          }
+
+          if (offsetInSecondChunk == 0) {
+            // There is no need to recompute any cutting points.
+            incompleteChunks.removePrefix(reusableChunkIndex);
+          } else {
+            // Because the first cutting point to keep resides at an offset beyond the minimum chunk
+            // size, we may have glossed over potential cutting points before it. Recompute these.
+            //
+            // This should only happen rarely, especially if the horizon size is sufficiently large.
+            int secondChunkStart = off + firstChunk;
+            int secondChunkRecomputedRegionLen = minSizeBytes + offsetInSecondChunk - 1;
+            long currentRecomputedHash = 0;
+            int warmupStart = secondChunkStart + minSizeBytes - GearHash.WINDOW_SIZE;
+            int warmupEnd = secondChunkStart + minSizeBytes;
+            for (int i = warmupStart; i < warmupEnd; i++) {
+              currentRecomputedHash =
+                  (currentRecomputedHash << 1) + GearHash.GEAR[d[i] & 0xFF];
+            }
+            incompleteChunks.set(0, 0);
+            long bestRecomputedHash = currentRecomputedHash;
+            int recomputedChunkIndex = 1;
+            int originalChunksCount = incompleteChunks.size();
+            int recomputeStart = secondChunkStart + minSizeBytes;
+            int recomputeLen = secondChunkRecomputedRegionLen - minSizeBytes;
+            for (int i = 0; i < recomputeLen; i++) {
+              currentRecomputedHash =
+                  (currentRecomputedHash << 1) + GearHash.GEAR[d[recomputeStart + i] & 0xFF];
+              if (Long.compareUnsigned(bestRecomputedHash, currentRecomputedHash) < 0) {
+                bestRecomputedHash = currentRecomputedHash;
+                int recomputedChunk = i + 1;
+                if (recomputedChunkIndex < reusableChunkIndex) {
+                  incompleteChunks.set(recomputedChunkIndex, recomputedChunk);
+                  recomputedChunkIndex++;
+                } else {
+                  incompleteChunks.add(recomputedChunk);
+                }
+              }
+            }
+            if (recomputedChunkIndex < reusableChunkIndex) {
+              // Recomputing yielded fewer cutting points than we had previously. Make the cutting
+              // points contiguous again.
+              incompleteChunks.removeRange(recomputedChunkIndex, reusableChunkIndex);
+            } else if (incompleteChunks.size() > originalChunksCount) {
+              // Recomputing yielded more cutting points than we had previously. The excess cutting
+              // points were stored at the end. Rotate them into place, so that the list remains
+              // sorted.
+              incompleteChunks.reverseRange(reusableChunkIndex, originalChunksCount);
+              incompleteChunks.reverseRange(originalChunksCount, incompleteChunks.size());
+              incompleteChunks.reverseRange(reusableChunkIndex, incompleteChunks.size());
+            }
+          }
+          break;
+        }
+
+        // The cutting point should be removed.
+        reusableChunkIndex++;
+        if (reusableChunkIndex == incompleteChunks.size()) {
+          incompleteChunks.truncate(1);
+          break;
         }
       }
     }
 
-    return minSizeBytes + bestCutOffsetBytes;
+    this.currentHash = currentHash;
+    this.bestHash = bestHash;
+    return firstChunk;
+  }
+
+  private static final class IntList {
+    private int[] values;
+    private int size;
+
+    IntList(int initialCapacity) {
+      this.values = new int[initialCapacity];
+    }
+
+    int size() {
+      return size;
+    }
+
+    int get(int index) {
+      return values[index];
+    }
+
+    int getLast() {
+      return values[size - 1];
+    }
+
+    void set(int index, int value) {
+      values[index] = value;
+    }
+
+    void add(int value) {
+      if (size == values.length) {
+        values = Arrays.copyOf(values, values.length * 2);
+      }
+      values[size++] = value;
+    }
+
+    int popLast() {
+      return values[--size];
+    }
+
+    void clear() {
+      size = 0;
+    }
+
+    void truncate(int newSize) {
+      size = newSize;
+    }
+
+    void removePrefix(int count) {
+      int newSize = size - count;
+      System.arraycopy(values, count, values, 0, newSize);
+      size = newSize;
+    }
+
+    void removeRange(int fromInclusive, int toExclusive) {
+      int removed = toExclusive - fromInclusive;
+      System.arraycopy(values, toExclusive, values, fromInclusive, size - toExclusive);
+      size -= removed;
+    }
+
+    void reverse() {
+      reverseRange(0, size);
+    }
+
+    void reverseRange(int fromInclusive, int toExclusive) {
+      for (int i = fromInclusive, j = toExclusive - 1; i < j; i++, j--) {
+        int tmp = values[i];
+        values[i] = values[j];
+        values[j] = tmp;
+      }
+    }
   }
 }

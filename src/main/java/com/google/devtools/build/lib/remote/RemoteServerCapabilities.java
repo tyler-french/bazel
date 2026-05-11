@@ -27,6 +27,7 @@ import build.bazel.remote.execution.v2.RequestMetadata;
 import build.bazel.remote.execution.v2.ServerCapabilities;
 import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.devtools.build.lib.remote.chunking.ChunkingConfig;
 import com.google.devtools.build.lib.remote.common.RemoteActionExecutionContext;
 import com.google.devtools.build.lib.remote.options.RemoteOptions;
 import com.google.devtools.build.lib.remote.util.TracingMetadataUtils;
@@ -257,10 +258,10 @@ class RemoteServerCapabilities {
               "--experimental_remote_cache_chunking requested but remote does not support"
                   + " SpliceBlob");
         }
-        if (!cacheCap.hasFastCdc2020Params()) {
+        if (ChunkingConfig.fromServerCapabilities(capabilities) == null) {
           result.addError(
               "--experimental_remote_cache_chunking requested but remote does not support"
-                  + " FastCDC 2020 chunking algorithm");
+                  + " FastCDC 2020 or RepMaxCDC chunking algorithm");
         }
       }
 

@@ -127,16 +127,22 @@ public class CombinedCache extends AbstractReferenceCounted {
       }
       if (!initialized) {
         synchronized (this) {
-          config = ChunkingConfig.fromServerCapabilities(getRemoteServerCapabilities());
-          if (config != null) {
-            downloader =
-                new ChunkedBlobDownloader(
-                    grpcClient, CombinedCache.this, digestUtil, chunkConcurrency);
-            uploader =
-                new ChunkedBlobUploader(
-                    grpcClient, CombinedCache.this, config, digestUtil, chunkConcurrency);
+          if (!initialized) {
+            config = ChunkingConfig.fromServerCapabilities(getRemoteServerCapabilities());
+            if (config != null) {
+              downloader =
+                  new ChunkedBlobDownloader(
+                      grpcClient,
+                      CombinedCache.this,
+                      digestUtil,
+                      config.chunkingFunction(),
+                      chunkConcurrency);
+              uploader =
+                  new ChunkedBlobUploader(
+                      grpcClient, CombinedCache.this, config, digestUtil, chunkConcurrency);
+            }
+            initialized = true;
           }
-          initialized = true;
         }
       }
       return config != null;

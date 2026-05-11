@@ -603,6 +603,7 @@ java_library(
     deps = [
         ":Retrier",
         ":client_api_version",
+        "//src/main/java/com/google/devtools/build/lib/remote/chunking",
         "//src/main/java/com/google/devtools/build/lib/remote/common",
         "//src/main/java/com/google/devtools/build/lib/remote/options",
         "//src/main/java/com/google/devtools/build/lib/remote/util",

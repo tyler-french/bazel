@@ -22,6 +22,7 @@ import com.google.devtools.build.lib.vfs.DigestHashFunction;
 import com.google.devtools.build.lib.vfs.SyscallCache;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 import org.junit.Test;
@@ -132,6 +133,22 @@ public class RepMaxCdcChunkerTest {
   }
 
   @Test
+  public void chunkToDigests_matchesSimpleReferenceImplementation() throws IOException {
+    int minSizeBytes = 256;
+    byte[] data = new byte[minSizeBytes * 100];
+    new Random(123).nextBytes(data);
+
+    for (int horizonSizeBytes = 0; horizonSizeBytes <= 4096; horizonSizeBytes += 512) {
+      RepMaxCdcChunker chunker =
+          new RepMaxCdcChunker(minSizeBytes, horizonSizeBytes, DIGEST_UTIL);
+      List<Digest> digests = chunker.chunkToDigests(new ByteArrayInputStream(data));
+
+      assertThat(chunkSizes(digests))
+          .isEqualTo(simpleRepMaxChunkSizes(data, minSizeBytes, horizonSizeBytes));
+    }
+  }
+
+  @Test
   public void chunkToDigests_digestsAreCorrect() throws IOException {
     RepMaxCdcChunker chunker = new RepMaxCdcChunker(256, 2048, DIGEST_UTIL);
     byte[] data = new byte[100];
@@ -196,5 +213,58 @@ public class RepMaxCdcChunkerTest {
     assertThat(digests.size()).isGreaterThan(1);
     long totalSize = digests.stream().mapToLong(Digest::getSizeBytes).sum();
     assertThat(totalSize).isEqualTo(data.length);
+  }
+
+  private static List<Long> chunkSizes(List<Digest> digests) {
+    List<Long> sizes = new ArrayList<>();
+    for (Digest digest : digests) {
+      sizes.add(digest.getSizeBytes());
+    }
+    return sizes;
+  }
+
+  private static List<Long> simpleRepMaxChunkSizes(
+      byte[] data, int minSizeBytes, int horizonSizeBytes) {
+    List<Long> chunks = new ArrayList<>();
+    int peekSizeBytes = 2 * minSizeBytes + horizonSizeBytes;
+    int cursor = 0;
+    while (cursor < data.length) {
+      int len = Math.min(peekSizeBytes, data.length - cursor);
+      if (len < 2 * minSizeBytes) {
+        chunks.add((long) len);
+        cursor += len;
+        continue;
+      }
+
+      int searchLen = len - minSizeBytes;
+      long initialHash = 0;
+      for (int i = cursor + minSizeBytes - GearHash.WINDOW_SIZE;
+          i < cursor + minSizeBytes;
+          i++) {
+        initialHash = (initialHash << 1) + GearHash.GEAR[data[i] & 0xFF];
+      }
+
+      while (true) {
+        long hash = initialHash;
+        long bestHash = hash;
+        int bestCutOffsetBytes = 0;
+        for (int i = 0; i < searchLen - minSizeBytes; i++) {
+          hash = (hash << 1) + GearHash.GEAR[data[cursor + minSizeBytes + i] & 0xFF];
+          if (Long.compareUnsigned(bestHash, hash) < 0) {
+            bestHash = hash;
+            bestCutOffsetBytes = i + 1;
+          }
+        }
+        if (bestCutOffsetBytes < minSizeBytes) {
+          int chunkSizeBytes = minSizeBytes + bestCutOffsetBytes;
+          chunks.add((long) chunkSizeBytes);
+          cursor += chunkSizeBytes;
+          break;
+        }
+
+        searchLen = bestCutOffsetBytes;
+      }
+    }
+    return chunks;
   }
 }

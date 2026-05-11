@@ -19,6 +19,7 @@ java_library(
     srcs = [
         "ChunkingConfigTest.java",
         "FastCdcChunkerTest.java",
+        "RepMaxCdcChunkerTest.java",
     ],
     data = [
         # Public domain image by Toriyama Sekien (1712-1788),

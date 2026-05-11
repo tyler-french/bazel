@@ -23,11 +23,17 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import build.bazel.remote.execution.v2.ActionResult;
+import build.bazel.remote.execution.v2.CacheCapabilities;
 import build.bazel.remote.execution.v2.Digest;
+import build.bazel.remote.execution.v2.DigestFunction;
+import build.bazel.remote.execution.v2.FastCdc2020Params;
 import build.bazel.remote.execution.v2.RequestMetadata;
+import build.bazel.remote.execution.v2.ServerCapabilities;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
@@ -711,6 +717,49 @@ public class CombinedCacheTest {
     combinedCache.shutdownNow();
 
     assertThat(upload.isCancelled()).isTrue();
+  }
+
+  @Test
+  public void chunkingCapabilitiesFetchedOnce() throws Exception {
+    GrpcCacheClient grpcCacheClient = mock(GrpcCacheClient.class);
+    ServerCapabilities capabilities =
+        ServerCapabilities.newBuilder()
+            .setCacheCapabilities(
+                CacheCapabilities.newBuilder()
+                    .addDigestFunctions(DigestFunction.Value.SHA256)
+                    .setSplitBlobSupport(true)
+                    .setSpliceBlobSupport(true)
+                    .setFastCdc2020Params(
+                        FastCdc2020Params.newBuilder().setAvgChunkSizeBytes(1024).build())
+                    .build())
+            .build();
+    when(grpcCacheClient.getServerCapabilities()).thenReturn(capabilities);
+    when(grpcCacheClient.findMissingDigests(any(), any()))
+        .thenReturn(immediateFuture(ImmutableSet.of()));
+    when(grpcCacheClient.spliceBlob(any(), any(), any(), any()))
+        .thenReturn(Futures.immediateVoidFuture());
+    CombinedCache combinedCache =
+        new CombinedCache(
+            grpcCacheClient,
+            /* diskCacheClient= */ null,
+            /* symlinkTemplate= */ null,
+            digestUtil,
+            /* chunkingEnabled= */ true,
+            /* chunkConcurrency= */ 8);
+    Path file1 = execRoot.getRelative("large1");
+    Path file2 = execRoot.getRelative("large2");
+    byte[] data1 = new byte[8192];
+    byte[] data2 = new byte[8192];
+    data2[0] = 1;
+    FileSystemUtils.writeContent(file1, data1);
+    FileSystemUtils.writeContent(file2, data2);
+
+    getFromFuture(
+        combinedCache.uploadFile(remoteActionExecutionContext, digestUtil.compute(data1), file1));
+    getFromFuture(
+        combinedCache.uploadFile(remoteActionExecutionContext, digestUtil.compute(data2), file2));
+
+    verify(grpcCacheClient, times(1)).getServerCapabilities();
   }
 
   private InMemoryCombinedCache newCombinedCache() {

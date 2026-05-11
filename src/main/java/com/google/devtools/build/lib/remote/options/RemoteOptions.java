@@ -839,10 +839,10 @@ public abstract class RemoteOptions extends CommonRemoteOptions {
       metadataTags = OptionMetadataTag.EXPERIMENTAL,
       effectTags = {OptionEffectTag.UNKNOWN},
       help =
-          "If enabled, large blobs are split into content-defined chunks using FastCDC 2020 and "
-              + "uploaded/downloaded in chunks, enabling deduplication across blobs. The server "
-              + "must advertise SplitBlob/SpliceBlob RPCs and FastCDC 2020 parameters in its "
-              + "capabilities.")
+          "If enabled, large blobs are split into content-defined chunks using an algorithm "
+              + "advertised by the server and uploaded/downloaded in chunks, enabling "
+              + "deduplication across blobs. The server must advertise SplitBlob/SpliceBlob RPCs "
+              + "and FastCDC 2020 or RepMaxCDC parameters in its capabilities.")
   public abstract boolean getExperimentalRemoteCacheChunking();
 
   @Option(

@@ -16,6 +16,7 @@ package com.google.devtools.build.lib.remote.common;
 
 import build.bazel.remote.execution.v2.Action;
 import build.bazel.remote.execution.v2.ActionResult;
+import build.bazel.remote.execution.v2.ChunkingFunction;
 import build.bazel.remote.execution.v2.Digest;
 import build.bazel.remote.execution.v2.ServerCapabilities;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -162,7 +163,10 @@ public interface RemoteCacheClient extends MissingDigestsFinder {
    */
   @Nullable
   default ListenableFuture<Void> spliceBlob(
-      RemoteActionExecutionContext context, Digest blobDigest, List<Digest> chunkDigests) {
+      RemoteActionExecutionContext context,
+      Digest blobDigest,
+      List<Digest> chunkDigests,
+      ChunkingFunction.Value chunkingFunction) {
     return null;
   }
 
