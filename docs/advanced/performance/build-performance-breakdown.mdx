@@ -230,6 +230,10 @@ consider turning on Build without the Bytes by passing
 [`--remote_download_minimal`](/reference/command-line-reference#flag--remote_download_minimal).
 This will speed up your builds by avoiding the download of unnecessary intermediate artifacts.
 
+For large artifacts that Bazel still needs to transfer, consider enabling
+[content-defined chunking](/remote/caching#content-defined-chunking) to reuse
+unchanged parts of similar artifacts.
+
 Another option is to configure a local
 [disk cache](/reference/command-line-reference#flag--disk_cache) to save on
 download bandwidth.

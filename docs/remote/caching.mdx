@@ -62,6 +62,76 @@ Bazel retrieves the output. This is a cache hit.
 actions locally and creates the required build outputs.
 5. New build outputs are uploaded to the remote cache.
 
+## Content-defined chunking {#content-defined-chunking}
+
+The content-addressable store normally identifies each output file as one
+blob. Even a small change gives the file a new digest, so a cache that only
+handles whole blobs must transfer and store the entire new file. This can be
+expensive for large outputs, such as linked binaries and archives, that remain
+mostly unchanged across builds.
+
+Content-defined chunking (CDC) splits a large blob at boundaries determined by
+its contents. Unlike fixed-size chunking, an insertion or deletion changes
+only the boundaries near the edit in most cases. Later unchanged regions tend
+to produce the same boundaries and chunk digests, so the cache can reuse their
+chunks.
+
+CDC changes how Bazel transfers a blob and how a compatible cache stores it,
+but not how Bazel identifies the action result or the complete blob. An action
+cache miss still causes the action to run, and the complete output still has
+its own digest.
+
+### How chunked transfers work {#chunked-transfers}
+
+Bazel gets the chunking function and its parameters from the remote cache's
+advertised capabilities. For a chunked upload, Bazel:
+
+1. Splits an eligible large blob and computes a digest for each chunk.
+2. Uses `FindMissingBlobs` to find chunks that the cache does not have.
+3. Uploads only the missing chunks.
+4. Uses `SpliceBlob` to register the ordered chunks that form the complete
+   blob.
+
+For a chunked download, Bazel uses `SplitBlob` to get the ordered chunk
+digests. It reuses chunks that are available locally, downloads the missing
+chunks, and concatenates them to produce the complete blob. A
+[disk cache](#disk-cache) can provide more chunks for reuse across builds.
+
+The `SplitBlob` and `SpliceBlob` operations are part of the
+[Remote Execution API](https://github.com/bazelbuild/remote-apis/blob/main/build/bazel/remote/execution/v2/remote_execution.proto).
+The chunks are ordinary CAS blobs. A compatible server also preserves normal
+whole-blob reads, so clients that use chunking and clients that do not use it
+can share a cache.
+
+### Enable content-defined chunking {#enable-content-defined-chunking}
+
+Content-defined chunking requires a gRPC remote cache that advertises
+`SplitBlob`, `SpliceBlob`, and parameters for a chunking function supported by
+Bazel. Enable it in your `.bazelrc` file:
+
+```posix-terminal
+build --remote_cache=grpcs://<var>your.host:port</var>
+build --experimental_remote_cache_chunking
+```
+
+By default, Bazel chooses a function advertised by the server, preferring
+FastCDC 2020 over RepMaxCDC when both are available. You can require a specific
+function with
+[`--experimental_remote_cache_chunking_function`](/reference/command-line-reference#flag--experimental_remote_cache_chunking_function).
+All clients that share a cache should use the same function and server-provided
+parameters to maximize chunk reuse.
+
+Bazel leaves smaller blobs on the normal whole-blob path. CDC works best for
+large outputs that remain byte-for-byte similar between revisions. It adds
+chunking work, metadata, and requests, and provides less benefit for content
+that changes throughout the file, such as some compressed or encrypted data.
+
+CDC complements
+[Build without the Bytes](/advanced/performance/build-performance-breakdown#monitoring-network-traffic-for-remote-builds).
+Build without the Bytes avoids downloading unneeded intermediate outputs from
+remote execution. CDC reduces the transfer when Bazel still needs to upload or
+download a large blob.
+
 ## Setting up a server as the cache's backend {#cache-backend}
 
 You need to set up a server to act as the cache's backend. A HTTP/1.1
@@ -361,6 +431,9 @@ and Bazel must rebuild it before using the remote cache.
 
 * **Faster Bazel builds with remote caching: a benchmark:** Nicolò Valigi wrote a [blog post](https://nicolovaligi.com/faster-bazel-remote-caching-benchmark.html)
 in which he benchmarks remote caching in Bazel.
+
+* **Remote Cache CDC: Reusing Bytes:** BuildBuddy explains
+  [content-defined chunking for remote caches](https://www.buildbuddy.io/blog/content-defined-chunking/).
 
 * [Adapting Rules for Remote Execution](/remote/rules)
 * [Troubleshooting Remote Execution](/remote/sandbox)
