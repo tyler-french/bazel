@@ -60,7 +60,12 @@ import org.junit.Test;
 
 /** Base class for integration tests for chunked remote cache using SplitBlob/SpliceBlob APIs. */
 public abstract class ChunkedCacheIntegrationTestBase extends BuildIntegrationTestCase {
-  @ClassRule @Rule public static final WorkerInstance worker = IntegrationTestUtils.createWorker();
+  // The worker keeps spliced-blob mappings separately from the disk CAS. Its disk-only action
+  // cache integrity check cannot resolve those mappings and would turn chunked outputs into
+  // cache misses before the client gets a chance to download them.
+  @ClassRule @Rule
+  public static final WorkerInstance worker =
+      IntegrationTestUtils.createWorker("--action_cache_integrity_check=false");
 
   protected abstract String getChunkingFunction();
 
@@ -69,6 +74,7 @@ public abstract class ChunkedCacheIntegrationTestBase extends BuildIntegrationTe
     super.setupOptions();
     addOptions(
         "--remote_cache=grpc://localhost:" + worker.getPort(),
+        "--remote_download_outputs=all",
         "--experimental_remote_cache_chunking",
         "--experimental_remote_cache_chunking_function=%s".formatted(getChunkingFunction()));
   }
@@ -102,7 +108,8 @@ public abstract class ChunkedCacheIntegrationTestBase extends BuildIntegrationTe
   private void cleanAndRestartServer() throws Exception {
     getOutputBase().getRelative("action_cache").deleteTreesBelow();
     createRuntimeWrapper();
-    addOptions("--experimental_remote_require_cached");
+    addOptions("--remote_upload_local_results=false");
+    events.clear();
   }
 
   private byte[] readFileBytes(Path path) throws IOException {
@@ -206,6 +213,7 @@ public abstract class ChunkedCacheIntegrationTestBase extends BuildIntegrationTe
 
     buildTarget("//:large_file");
 
+    events.assertContainsInfo("1 remote cache hit");
     assertThat(output.exists()).isTrue();
     assertThat(readFileBytes(output)).isEqualTo(originalContent);
   }
@@ -261,6 +269,7 @@ public abstract class ChunkedCacheIntegrationTestBase extends BuildIntegrationTe
 
     buildTarget("//:data_a", "//:data_b", "//:combined");
 
+    events.assertContainsInfo("3 remote cache hit");
     assertThat(readFileBytes(outputA)).isEqualTo(contentA);
     assertThat(readFileBytes(outputB)).isEqualTo(contentB);
     assertThat(readFileBytes(outputCombined)).isEqualTo(contentCombined);
@@ -381,6 +390,7 @@ public abstract class ChunkedCacheIntegrationTestBase extends BuildIntegrationTe
 
     buildTarget("//:large", "//:small");
 
+    events.assertContainsInfo("2 remote cache hit");
     assertThat(readFileBytes(largePath)).isEqualTo(largeContent);
     assertThat(readContent(smallPath, UTF_8)).isEqualTo("small output\n");
   }
